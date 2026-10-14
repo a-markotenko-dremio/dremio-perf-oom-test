@@ -18,6 +18,7 @@ Configuration via environment variables:
                    <STORAGE_PATH>/output. The directory must be writable by the Dremio user.
 """
 import os
+import shutil
 import time
 import urllib.parse
 from pathlib import Path
@@ -39,6 +40,7 @@ OUTPUT_SOURCE = "perf_output"
 SQL_DIR = Path(__file__).parent
 INPUT_TABLE = f'"{INPUT_SOURCE}".STACKIT_S3."tpcds-1tb-flat".catalog_sales'
 OUTPUT_TABLE = f'"{OUTPUT_SOURCE}"."tpcds-1tb".catalog_sales'
+OUTPUT_TABLE_DIR = STORAGE_PATH / "output" / "tpcds-1tb" / "catalog_sales"
 SQL_PARAMS = {"INPUT_SOURCE": INPUT_SOURCE, "OUTPUT_SOURCE": OUTPUT_SOURCE}
 
 
@@ -158,7 +160,8 @@ def unpromote_input_table(auth_headers):
     existing = requests.get(by_path, headers=auth_headers, timeout=30)
     if existing.ok and existing.json().get("entityType") == "dataset":
         d = existing.json()
-        requests.delete(f"{base}/{d['id']}?tag={d['tag']}", headers=auth_headers,
+        # params= URL-encodes the tag: it may contain '+', which a raw query string turns into a space.
+        requests.delete(f"{base}/{d['id']}", params={"tag": d["tag"]}, headers=auth_headers,
                         timeout=60).raise_for_status()
 
 
@@ -185,11 +188,24 @@ def prepared_data(auth_headers, storage):
     promote_folder(auth_headers)
 
 
+def clean_output_table(run_sql):
+    """Removes the output table of a previous run, also when this Dremio does not know it.
+
+    STORAGE_PATH outlives the container, so a fresh Dremio has no metadata for the table left on
+    disk; DROP TABLE IF EXISTS is then a no-op and CREATE TABLE fails with "Folder already exists".
+    """
+    run_sql(f"DROP TABLE IF EXISTS {OUTPUT_TABLE}")
+    if OUTPUT_TABLE_DIR.exists():
+        print(f"removing leftover output table folder {OUTPUT_TABLE_DIR}", flush=True)
+        shutil.rmtree(OUTPUT_TABLE_DIR)
+
+
 def test_output_row_count_matches_input(prepared_data, run_sql, count_rows):
     input_count = count_rows(INPUT_TABLE)
     assert input_count == ROW_COUNT, \
         f"Input table has {input_count} rows, expected {ROW_COUNT}"
 
+    clean_output_table(run_sql)
     for stmt in load_statements("run_test_body.sql", **SQL_PARAMS):
         run_sql(stmt)
 
