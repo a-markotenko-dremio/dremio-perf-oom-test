@@ -19,7 +19,13 @@ def host_name():
 
 
 def host_ram():
-    """Physical RAM of this host in whole GB, e.g. '16G' (rounded up: the OS reserves some)."""
+    """RAM available to Dremio, e.g. '4G': the container memory limit (CONTAINER_RAM_MB, set by
+    deploy_dremio.sh and `make test-container`) or, when run directly on a host, its physical RAM
+    rounded up to whole GB (the OS reserves some)."""
+    limit_mb = os.environ.get("CONTAINER_RAM_MB")
+    if limit_mb:
+        mb = int(limit_mb)
+        return f"{mb // 1024}G" if mb % 1024 == 0 else f"{mb}M"
     total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
     return f"{math.ceil(total / 2**30)}G"
 
