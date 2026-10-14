@@ -27,10 +27,12 @@ import pytest
 import requests
 
 import generate_data
+import results_report
 
 DREMIO_URL = os.environ.get("DREMIO_URL", "http://localhost:9047").rstrip("/")
 TIMEOUT = int(os.environ.get("DREMIO_TIMEOUT", "3600"))
 ROW_COUNT = int(os.environ.get("ROW_COUNT", "100000"))
+REPORT_CSV = Path(os.environ.get("REPORT_CSV", Path(__file__).parent / "test_results.csv"))
 MAX_ROW_COUNT = 2**31 - 1  # ids are generated as INT in generate_data.py
 
 STORAGE_PATH = Path(os.environ.get("STORAGE_PATH", "/mnt/ubuntu-var/dremio"))
@@ -200,15 +202,55 @@ def clean_output_table(run_sql):
         shutil.rmtree(OUTPUT_TABLE_DIR)
 
 
-def test_output_row_count_matches_input(prepared_data, run_sql, count_rows):
+def query_rows(run_sql, auth_headers, sql):
+    job = run_sql(sql)
+    res = requests.get(f"{DREMIO_URL}/api/v3/job/{job['id']}/results",
+                       headers=auth_headers, timeout=60)
+    res.raise_for_status()
+    return res.json()["rows"]
+
+
+def write_report(run_sql, auth_headers, minutes, verdict):
+    """Adds this run to REPORT_CSV; what Dremio reports about itself is queried from Dremio."""
+    version = query_rows(run_sql, auth_headers, "SELECT version FROM sys.nodes")[0]["version"]
+    mem = query_rows(run_sql, auth_headers, "SELECT heap_max, direct_max FROM sys.memory")[0]
+    host = results_report.host_name()
+    results_report.append_row(REPORT_CSV, {
+        "Host src": host, "Data src": "dir/Parquet",
+        "Host dst": host, "Data dst": "dir/Iceberg",
+        "Dremio ver": version,
+        "JVM ver": os.environ.get("JVM_VERSION", ""),
+        "Host RAM": results_report.host_ram(),
+        "DREMIO_MAX_DIRECT_MEMORY_SIZE_MB": mem["direct_max"] // (1024 * 1024),
+        "DREMIO_MAX_HEAP_MEMORY_SIZE_MB": mem["heap_max"] // (1024 * 1024),
+        "Rows": results_report.format_rows(ROW_COUNT),
+        "Duration (minutes)": f"{minutes:.1f}",
+        "Verdict": verdict,
+        "Run by": results_report.run_by(),
+    })
+    print(f"report row added to {REPORT_CSV}", flush=True)
+
+
+def test_output_row_count_matches_input(prepared_data, run_sql, count_rows, auth_headers):
     input_count = count_rows(INPUT_TABLE)
     assert input_count == ROW_COUNT, \
         f"Input table has {input_count} rows, expected {ROW_COUNT}"
 
     clean_output_table(run_sql)
-    for stmt in load_statements("run_test_body.sql", **SQL_PARAMS):
-        run_sql(stmt)
+    verdict = "FAIL"
+    started = time.monotonic()
+    elapsed = None
+    try:
+        for stmt in load_statements("run_test_body.sql", **SQL_PARAMS):
+            run_sql(stmt)
+        elapsed = time.monotonic() - started
 
-    output_count = count_rows(OUTPUT_TABLE)
-    assert output_count == input_count, \
-        f"Output table has {output_count} rows, input has {input_count}"
+        output_count = count_rows(OUTPUT_TABLE)
+        assert output_count == input_count, \
+            f"Output table has {output_count} rows, input has {input_count}"
+        verdict = "PASS"
+    finally:
+        # Duration of the SQL statements (DROP + CREATE TABLE ... AS SELECT); also recorded on failure.
+        if elapsed is None:
+            elapsed = time.monotonic() - started
+        write_report(run_sql, auth_headers, elapsed / 60, verdict)

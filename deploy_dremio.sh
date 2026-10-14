@@ -24,7 +24,7 @@ Options:
   --input PATH|URL           input data: a local directory (mounted read-only at the same
                              path) or a MinIO/S3 endpoint over TCP (http[s]://host:port[/bucket]
                              or s3://host:port[/bucket]); exported to the tests as INPUT_PATH
-  --name NAME                container name (default: dremio-j<java>-d<dremio major>, e.g. dremio-j17-d27)
+  --name NAME                container name (default: dremio-j<java>-d<dremio major>-<memory>, e.g. dremio-j17-d27-14G)
   --cpus N                   CPU limit of the container (default: unlimited)
   --image IMAGE              base image, used as is (default: a local cached image perf-java<N> with
                              OpenJDK and curl preinstalled, built from images:ubuntu/22.04 for incus
@@ -36,6 +36,8 @@ Options:
   --rows N                   number of rows of the generated input table, 1..2147483647 (exported
                              as ROW_COUNT; default: the ROW_COUNT environment variable, else 100000).
                              Data is generated in reusable 10M-row blocks under STORAGE_PATH/blocks
+  --allow-shared-storage     do not stop if another running container already mounts the same
+                             --storage-path (runs on a shared path overwrite each other's data)
   --dry-run                  deploy and verify the environment, then run pytest in dry-run
                              mode: tests are collected and the environment smoke test runs,
                              but the real test (data generation, queries) is skipped
@@ -45,7 +47,7 @@ EOF
 
 PACKAGE="" STORAGE_PATH="" INPUT="" IMAGE=""
 JAVA_VERSION=17 HEAP_MB=4096 DIRECT_MB=8192 CONTAINER_MB="" CPUS="" NAME=""
-RECREATE=0 DRY_RUN=0 ACCEPT_EULA=0 REBUILD_IMAGE=0 ROWS=""
+RECREATE=0 DRY_RUN=0 ACCEPT_EULA=0 REBUILD_IMAGE=0 ROWS="" ALLOW_SHARED=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -63,6 +65,7 @@ while [[ $# -gt 0 ]]; do
         --rebuild-image) REBUILD_IMAGE=1; shift ;;
         --accept-eula) ACCEPT_EULA=1; shift ;;
         --rows) ROWS=$2; shift 2 ;;
+        --allow-shared-storage) ALLOW_SHARED=1; shift ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -84,15 +87,17 @@ fi
 for v in JAVA_VERSION HEAP_MB DIRECT_MB; do
     [[ ${!v} =~ ^[0-9]+$ ]] || die "$v must be a positive integer"
 done
-# Default container name: dremio-j<java>-d<dremio major version from the package file name>
-if [[ -z $NAME ]]; then
-    NAME=dremio-j${JAVA_VERSION}
-    [[ $(basename "$PACKAGE") =~ -([0-9]+)\.[0-9]+\.[0-9]+ ]] && NAME+=-d${BASH_REMATCH[1]}
-fi
 CONTAINER_MB=${CONTAINER_MB:-$((HEAP_MB + DIRECT_MB + 2048))}
 [[ $CONTAINER_MB =~ ^[0-9]+$ ]] || die "--container-memory-mb must be an integer"
 (( HEAP_MB + DIRECT_MB < CONTAINER_MB )) \
     || die "heap ($HEAP_MB) + direct ($DIRECT_MB) MB must be less than container memory ($CONTAINER_MB MB)"
+# Default container name: dremio-j<java>-d<dremio major version from the package file name>-<memory>
+# where <memory> is the container memory limit (e.g. 14G, or 1500M when not a whole number of GB)
+if [[ -z $NAME ]]; then
+    NAME=dremio-j${JAVA_VERSION}
+    [[ $(basename "$PACKAGE") =~ -([0-9]+)\.[0-9]+\.[0-9]+ ]] && NAME+=-d${BASH_REMATCH[1]}
+    if (( CONTAINER_MB % 1024 == 0 )); then NAME+=-$((CONTAINER_MB / 1024))G; else NAME+=-${CONTAINER_MB}M; fi
+fi
 
 if command -v incus >/dev/null; then CT=incus; DEFAULT_IMAGE=images:ubuntu/22.04
 elif command -v lxc >/dev/null; then CT=lxc; DEFAULT_IMAGE=ubuntu:22.04
@@ -152,6 +157,21 @@ if (( USE_CACHED_IMAGE )); then
         fi
         $CT delete --force "$BUILD"
     fi
+fi
+
+# ---------------------------------------------------------------- shared storage guard
+# Two Dremios on one STORAGE_PATH share input/ and output/: concurrent test runs collide
+# (e.g. "Folder already exists" on CREATE TABLE). Use a separate --storage-path per container.
+if (( ! ALLOW_SHARED )); then
+    while IFS=, read -r other state; do
+        [[ -n $other && $other != "$NAME" && $state == RUNNING ]] || continue
+        src=$($CT config device get "$other" storage source 2>/dev/null) || continue
+        [[ -n $src ]] || continue
+        src=$(realpath -m "$src")
+        if [[ $src == "$STORAGE_PATH" || $src == "$STORAGE_PATH"/* || $STORAGE_PATH == "$src"/* ]]; then
+            die "container '$other' (running) already uses storage $src, which overlaps $STORAGE_PATH: use a separate --storage-path per container (e.g. $STORAGE_PATH-$NAME), or pass --allow-shared-storage"
+        fi
+    done < <($CT list -c ns --format csv)
 fi
 
 # ---------------------------------------------------------------- container
@@ -279,6 +299,7 @@ cd "$(dirname "$(readlink -f "$0")")"
 make venv
 export DREMIO_URL DREMIO_USER DREMIO_PASSWORD STORAGE_PATH
 export HEAP_MB DIRECT_MB
+JVM_VERSION=$(sed -n 's/.*Runtime Environment.*(build \(.*\))/\1/p' <<<"$java_out"); export JVM_VERSION
 [[ -n $ROWS ]] && export ROW_COUNT=$ROWS
 [[ -n $INPUT_PATH_ENV ]] && export INPUT_PATH=$INPUT_PATH_ENV
 pytest_args=(-v -rs test_environment.py test_catalog_sales.py)
