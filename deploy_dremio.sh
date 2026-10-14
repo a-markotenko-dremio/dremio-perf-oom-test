@@ -33,6 +33,9 @@ Options:
   --recreate                 delete the container first if it already exists
   --accept-eula              accept the Dremio EULA via POST /apiv2/eula/accept (you confirm
                              that you have read and agree to the license terms)
+  --rows N                   number of rows of the generated input table, 1..2147483647 (exported
+                             as ROW_COUNT; default: the ROW_COUNT environment variable, else 100000).
+                             Data is generated in reusable 10M-row blocks under STORAGE_PATH/blocks
   --dry-run                  deploy and verify the environment, then run pytest in dry-run
                              mode: tests are collected and the environment smoke test runs,
                              but the real test (data generation, queries) is skipped
@@ -42,7 +45,7 @@ EOF
 
 PACKAGE="" STORAGE_PATH="" INPUT="" IMAGE=""
 JAVA_VERSION=17 HEAP_MB=4096 DIRECT_MB=8192 CONTAINER_MB="" CPUS="" NAME=""
-RECREATE=0 DRY_RUN=0 ACCEPT_EULA=0 REBUILD_IMAGE=0
+RECREATE=0 DRY_RUN=0 ACCEPT_EULA=0 REBUILD_IMAGE=0 ROWS=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -59,6 +62,7 @@ while [[ $# -gt 0 ]]; do
         --recreate) RECREATE=1; shift ;;
         --rebuild-image) REBUILD_IMAGE=1; shift ;;
         --accept-eula) ACCEPT_EULA=1; shift ;;
+        --rows) ROWS=$2; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -72,6 +76,11 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 [[ -n $STORAGE_PATH ]] || { usage >&2; die "--storage-path is required"; }
 [[ -f $PACKAGE ]] || die "package not found: $PACKAGE"
 [[ $PACKAGE == *.tar.gz || $PACKAGE == *.tgz ]] || die "only tarball packages (.tar.gz) are supported"
+ROWS=${ROWS:-${ROW_COUNT:-}}
+if [[ -n $ROWS ]]; then
+    [[ $ROWS =~ ^[0-9]+$ ]] && (( ROWS >= 1 && ROWS <= 2147483647 )) \
+        || die "--rows must be an integer in 1..2147483647, got '$ROWS'"
+fi
 for v in JAVA_VERSION HEAP_MB DIRECT_MB; do
     [[ ${!v} =~ ^[0-9]+$ ]] || die "$v must be a positive integer"
 done
@@ -270,6 +279,7 @@ cd "$(dirname "$(readlink -f "$0")")"
 make venv
 export DREMIO_URL DREMIO_USER DREMIO_PASSWORD STORAGE_PATH
 export HEAP_MB DIRECT_MB
+[[ -n $ROWS ]] && export ROW_COUNT=$ROWS
 [[ -n $INPUT_PATH_ENV ]] && export INPUT_PATH=$INPUT_PATH_ENV
 pytest_args=(-v -rs test_environment.py test_catalog_sales.py)
 (( DRY_RUN )) && pytest_args+=(--dry-run)
