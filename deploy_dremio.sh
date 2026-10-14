@@ -231,7 +231,11 @@ IP=$(cx hostname -I | awk '{print $1}')
 DREMIO_URL="http://$IP:9047"
 log "Waiting for Dremio at $DREMIO_URL"
 for _ in $(seq 180); do
-    if (( ACCEPT_EULA )); then curl -fsS -X POST "$DREMIO_URL/apiv2/eula/accept" >/dev/null 2>&1 || true; fi
+    if (( ACCEPT_EULA )); then
+        curl -fsS -X POST "$DREMIO_URL/apiv2/eula/accept" >/dev/null 2>&1 || true
+    elif curl -sS "$DREMIO_URL/apiv2/server_status" 2>/dev/null | grep -q "EULA has not been accepted"; then
+        die "Dremio EULA has not been accepted: re-run with --accept-eula (you agree to the Dremio license terms), or accept it in the web UI at $DREMIO_URL and re-run with --recreate"
+    fi
     curl -fsS "$DREMIO_URL/apiv2/server_status" 2>/dev/null | grep -q OK && break
     sleep 5
 done
