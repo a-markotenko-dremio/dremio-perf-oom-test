@@ -1,37 +1,43 @@
 #!/usr/bin/env bash
-# OOM threshold search: for each (heap, direct) pair deploy a 4G container, run the test on growing
-# row counts until it fails, then delete the container.
-# Combinations already present in test_results.csv (same Dremio version, memory, rows) are skipped;
-# a FAIL recorded there ends the row sweep for that pair, just like a fresh failure would.
+# OOM threshold search: for each (heap, direct) pair deploy a container with a fixed memory and CPU
+# count, run the test on growing row counts until it fails, then delete the container.
+# Combinations already present in test_results.csv (same Dremio version, memory, CPUs, heap, direct,
+# rows) are skipped; a FAIL recorded there ends the row sweep for that pair, like a fresh failure.
+# Rows recorded before the CPUs column existed (empty CPUs) count as matching.
 #
 #   ./cyrcle.sh                 run
 #   PLAN=1 ./cyrcle.sh          only print what would run / be skipped
 cd "$(dirname "$0")" || exit 1
 
-PKG=/mnt/ubuntu-var/dremio/Downloads/dremio-enterprise-26.1.10-202607291955500295-6a7e3d8c.tar.gz
-JAVA=21
-CONTAINER_MB=4096
-C=d26-1-10-j21-4G                       # instance names allow only alphanumerics and hyphens
-SP=/mnt/ubuntu-var/dremio/$C
-CSV=${REPORT_CSV:-test_results.csv}
+PKG=${PKG:-/mnt/ubuntu-var/dremio/Downloads/dremio-enterprise-26.1.10-202607291955500295-6a7e3d8c.tar.gz}
+JAVA=${JAVA:-21}
+CONTAINER_MB=${CONTAINER_MB:-4096}
+CPUS=${CPUS:-4}                          # same CPU count on every server, so that results compare
 HEAP_DIRECT=("2048 1024" "1536 1024" "1024 1024" "1024 512" "768 512")
 ROWS=(10M 50M 100M 200M 500M)
+CSV=${REPORT_CSV:-test_results.csv}
+# Generated data blocks shared by all storage paths (<storage>/blocks -> this directory)
+export BLOCKS_DIR=${BLOCKS_DIR:-/mnt/ubuntu-var/dremio/blocks}
 
 CT=$(command -v incus >/dev/null && echo incus || echo lxc)
 # "26.1.10-202607291955500295-6a7e3d8c": the Dremio version column of the CSV
 VER=$(basename "$PKG" .tar.gz | sed -E 's/^[^0-9]*//')
 RAM="$((CONTAINER_MB / 1024))G"
+# Same name as deploy_dremio.sh builds by default: d<version>-j<java>-<memory>-<cpus>cpu
+C=$(echo "$VER" | sed -E 's/^([0-9]+)\.([0-9]+)\.([0-9]+).*/d\1-\2-\3/')-j$JAVA-$RAM-${CPUS}cpu
+SP=/mnt/ubuntu-var/dremio/$C
 
 # Prints PASS/FAIL if the CSV already has this combination, nothing otherwise.
 recorded() {  # heap direct rows
   [[ -f $CSV ]] || return 0
-  python3 -I - "$CSV" "$VER" "$RAM" "$2" "$1" "$3" <<'EOF'
+  python3 -I - "$CSV" "$VER" "$RAM" "$CPUS" "$2" "$1" "$3" <<'EOF'
 import csv, sys
-path, ver, ram, direct, heap, rows = sys.argv[1:]
+path, ver, ram, cpus, direct, heap, rows = sys.argv[1:]
 with open(path, newline="") as f:
     for r in csv.DictReader(f):
         if (r["Dremio ver"], r["Host RAM"], r["DREMIO_MAX_DIRECT_MEMORY_SIZE_MB"],
-            r["DREMIO_MAX_HEAP_MEMORY_SIZE_MB"], r["Rows"]) == (ver, ram, direct, heap, rows):
+            r["DREMIO_MAX_HEAP_MEMORY_SIZE_MB"], r["Rows"]) == (ver, ram, direct, heap, rows) \
+           and r.get("CPUs", "") in ("", cpus):
             print(r["Verdict"])
             break
 EOF
@@ -47,6 +53,7 @@ pending() {  # heap direct
   done
 }
 
+echo "container=$C storage=$SP blocks=$BLOCKS_DIR cpus=$CPUS memory=$RAM"
 for cfg in "${HEAP_DIRECT[@]}"; do
   set -- $cfg
   heap=$1 direct=$2
@@ -62,7 +69,8 @@ for cfg in "${HEAP_DIRECT[@]}"; do
   [[ -n ${PLAN:-} ]] && continue
 
   if ./deploy_dremio.sh --package "$PKG" --storage-path "$SP" --java-version "$JAVA" --name "$C" \
-       --container-memory-mb "$CONTAINER_MB" --heap-memory-mb "$heap" --direct-memory-mb "$direct" \
+       --container-memory-mb "$CONTAINER_MB" --cpus "$CPUS" \
+       --heap-memory-mb "$heap" --direct-memory-mb "$direct" \
        --accept-eula --recreate --dry-run; then
     for rows in $todo; do
       make test-container CONTAINER="$C" ROW_COUNT="$rows" || { echo "FAIL heap=$heap direct=$direct rows=$rows"; break; }

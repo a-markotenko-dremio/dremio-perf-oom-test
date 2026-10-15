@@ -24,7 +24,7 @@ Options:
   --input PATH|URL           input data: a local directory (mounted read-only at the same
                              path) or a MinIO/S3 endpoint over TCP (http[s]://host:port[/bucket]
                              or s3://host:port[/bucket]); exported to the tests as INPUT_PATH
-  --name NAME                container name (default: d<dremio version>-j<java>-<memory>, e.g. d26-1-8-j21-16G)
+  --name NAME                container name (default: d<dremio version>-j<java>-<memory>-<cpus>cpu, e.g. d26-1-8-j21-16G-4cpu)
   --cpus N                   CPU limit of the container (default: unlimited)
   --image IMAGE              base image, used as is (default: a local cached image perf-java<N> with
                              OpenJDK and curl preinstalled, built from images:ubuntu/22.04 for incus
@@ -96,9 +96,10 @@ CONTAINER_MB=${CONTAINER_MB:-$((HEAP_MB + DIRECT_MB + 2048))}
 [[ $CONTAINER_MB =~ ^[0-9]+$ ]] || die "--container-memory-mb must be an integer"
 (( HEAP_MB + DIRECT_MB < CONTAINER_MB )) \
     || die "heap ($HEAP_MB) + direct ($DIRECT_MB) MB must be less than container memory ($CONTAINER_MB MB)"
-# Default container name: d<dremio version>-j<java>-<memory>, e.g. d26-1-8-j21-16G. The version comes
+# Default container name: d<dremio version>-j<java>-<memory>-<cpus>cpu, e.g. d26-1-8-j21-16G-4cpu. The version comes
 # from the package file name; dots become hyphens because instance names allow only alphanumerics
-# and hyphens. <memory> is the container memory limit (14G, or 1500M when not a whole number of GB).
+# and hyphens. <memory> is the container memory limit (14G, or 1500M when not a whole number of GB);
+# <cpus> is --cpus, or the number of CPUs of this host when the container is not limited.
 if [[ -z $NAME ]]; then
     NAME=""
     if [[ $(basename "$PACKAGE") =~ -([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
@@ -106,6 +107,7 @@ if [[ -z $NAME ]]; then
     fi
     NAME+=j${JAVA_VERSION}
     if (( CONTAINER_MB % 1024 == 0 )); then NAME+=-$((CONTAINER_MB / 1024))G; else NAME+=-${CONTAINER_MB}M; fi
+    if [[ $CPUS =~ ^[0-9]+$ ]]; then NAME+=-${CPUS}cpu; else NAME+=-$(nproc)cpu; fi
 fi
 
 if command -v incus >/dev/null; then CT=incus; DEFAULT_IMAGE=images:ubuntu/22.04
