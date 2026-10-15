@@ -30,6 +30,9 @@ Options:
                              OpenJDK and curl preinstalled, built from images:ubuntu/22.04 for incus
                              or ubuntu:22.04 for lxc on the first run)
   --rebuild-image            rebuild the cached perf-java<N> image (e.g. to pick up JDK updates)
+  --java-opts "OPTS"         extra JVM options for the Dremio server (DREMIO_JAVA_SERVER_EXTRA_OPTS in
+                             dremio-env), e.g. "-XX:InitiatingHeapOccupancyPercent=90 -XX:+UseParallelGC"
+  --gc-log                   write the GC log to /opt/dremio/log/gc.log in the container (-Xlog:gc*, Java 9+)
   --recreate                 delete the container first if it already exists
   --accept-eula              accept the Dremio EULA via POST /apiv2/eula/accept (you confirm
                              that you have read and agree to the license terms)
@@ -48,6 +51,7 @@ EOF
 
 PACKAGE="" STORAGE_PATH="" INPUT="" IMAGE=""
 JAVA_VERSION=17 HEAP_MB=4096 DIRECT_MB=8192 CONTAINER_MB="" CPUS="" NAME=""
+JAVA_OPTS="" GC_LOG=0
 RECREATE=0 DRY_RUN=0 ACCEPT_EULA=0 REBUILD_IMAGE=0 ROWS="" ALLOW_SHARED=0
 
 while [[ $# -gt 0 ]]; do
@@ -62,6 +66,8 @@ while [[ $# -gt 0 ]]; do
         --name) NAME=$2; shift 2 ;;
         --cpus) CPUS=$2; shift 2 ;;
         --image) IMAGE=$2; shift 2 ;;
+        --java-opts) JAVA_OPTS=$2; shift 2 ;;
+        --gc-log) GC_LOG=1; shift ;;
         --recreate) RECREATE=1; shift ;;
         --rebuild-image) REBUILD_IMAGE=1; shift ;;
         --accept-eula) ACCEPT_EULA=1; shift ;;
@@ -89,6 +95,7 @@ if [[ -n $ROWS ]]; then
     ROWS=$(awk -v v="${BASH_REMATCH[1]}" -v m="$mult" 'BEGIN { printf "%.0f", v * m }')
     (( ROWS >= 1 && ROWS <= 2147483647 )) || die "--rows must be in 1..2147483647 rows, got $ROWS"
 fi
+(( GC_LOG )) && JAVA_OPTS="${JAVA_OPTS:+$JAVA_OPTS }-Xlog:gc*:file=/opt/dremio/log/gc.log:time,uptime:filecount=5,filesize=50m"
 for v in JAVA_VERSION HEAP_MB DIRECT_MB; do
     [[ ${!v} =~ ^[0-9]+$ ]] || die "$v must be a positive integer"
 done
@@ -233,18 +240,22 @@ $CT file push "$PACKAGE" "$NAME/tmp/dremio.tar.gz"
 cx bash -c "mkdir -p /opt/dremio && tar -xzf /tmp/dremio.tar.gz -C /opt/dremio --strip-components=1 && rm /tmp/dremio.tar.gz"
 cx test -x /opt/dremio/bin/dremio || die "bin/dremio not found: unexpected tarball layout"
 
-log "Configuring dremio-env (heap ${HEAP_MB}MB, direct ${DIRECT_MB}MB, JAVA_HOME $JAVA_HOME_DIR)"
+log "Configuring dremio-env (heap ${HEAP_MB}MB, direct ${DIRECT_MB}MB, JAVA_HOME $JAVA_HOME_DIR${JAVA_OPTS:+, JVM options: $JAVA_OPTS})"
 cx bash -c "
     f=/opt/dremio/conf/dremio-env
     touch \$f
-    sed -i -E '/^(export )?(DREMIO_MAX_HEAP_MEMORY_SIZE_MB|DREMIO_MAX_DIRECT_MEMORY_SIZE_MB|JAVA_HOME)=/d' \$f
+    sed -i -E '/^(export )?(DREMIO_MAX_HEAP_MEMORY_SIZE_MB|DREMIO_MAX_DIRECT_MEMORY_SIZE_MB|DREMIO_JAVA_SERVER_EXTRA_OPTS|JAVA_HOME)=/d' \$f
     {
         echo 'DREMIO_MAX_HEAP_MEMORY_SIZE_MB=$HEAP_MB'
         echo 'DREMIO_MAX_DIRECT_MEMORY_SIZE_MB=$DIRECT_MB'
         echo 'JAVA_HOME=$JAVA_HOME_DIR'
     } >> \$f
-    chown -R dremio:$HOST_GID /opt/dremio
 "
+# Written from stdin, so that quotes and $ in the options reach dremio-env unchanged.
+if [[ -n $JAVA_OPTS ]]; then
+    printf 'DREMIO_JAVA_SERVER_EXTRA_OPTS="%s"\n' "$JAVA_OPTS" | cx bash -c "cat >> /opt/dremio/conf/dremio-env"
+fi
+cx bash -c "mkdir -p /opt/dremio/log; chown -R dremio:$HOST_GID /opt/dremio"
 
 cx bash -c "cat > /etc/systemd/system/dremio.service" <<EOF
 [Unit]
@@ -297,6 +308,11 @@ args=$(cx bash -c "ps -eo args | grep '[D]remioDaemon' || true")
 [[ -n $args ]] || die "Dremio java process not found"
 grep -qE -- "-Xmx${HEAP_MB}m( |$)" <<<"$args" || die "java is not running with -Xmx${HEAP_MB}m"
 grep -qE -- "-XX:MaxDirectMemorySize=${DIRECT_MB}m( |$)" <<<"$args" || die "java is not running with MaxDirectMemorySize=${DIRECT_MB}m"
+if [[ -n $JAVA_OPTS ]]; then
+    for opt in $JAVA_OPTS; do
+        grep -qF -- "$opt" <<<"$args" || die "java is not running with $opt"
+    done
+fi
 java_out=$(cx "$JAVA_HOME_DIR/bin/java" -version 2>&1) || die "cannot run $JAVA_HOME_DIR/bin/java"
 grep -qE "version \"($JAVA_VERSION|1\.$JAVA_VERSION)[.\"]" <<<"$java_out" \
     || die "java $JAVA_VERSION is not the active JVM"

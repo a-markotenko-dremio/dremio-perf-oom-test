@@ -11,6 +11,9 @@ Configuration via environment variables:
   DREMIO_URL       (default http://localhost:9047)
   DREMIO_TOKEN     personal access token (Bearer), or
   DREMIO_USER / DREMIO_PASSWORD  for login via /apiv2/login (default dremio/dremio123)
+  PRE_SQL          optional ';'-separated statements run before the test body, e.g. to raise the parallelism:
+                   "ALTER SYSTEM SET planner.width.max_per_node = 28; ALTER SYSTEM SET planner.width.max_per_query = 1000".
+                   Use ALTER SYSTEM: every job is its own session, so ALTER SESSION would not reach the test body.
   DREMIO_TIMEOUT   seconds allowed for each job to finish (default 3600)
   ROW_COUNT        number of rows to generate, e.g. 10000000, 10M or 1.44G (default 100000, max 2147483647)
   BLOCKS_DIR       optional directory of generated blocks shared by several STORAGE_PATHs
@@ -50,6 +53,9 @@ SQL_PARAMS = {"INPUT_SOURCE": INPUT_SOURCE, "OUTPUT_SOURCE": OUTPUT_SOURCE}
 
 def split_statements(text):
     return [s.strip() for s in text.split(";") if s.strip()]
+
+
+PRE_SQL = split_statements(os.environ.get("PRE_SQL", ""))
 
 
 def load_statements(filename, **params):
@@ -244,6 +250,9 @@ def test_output_row_count_matches_input(prepared_data, run_sql, count_rows, auth
     started = time.monotonic()
     elapsed = None
     try:
+        for stmt in PRE_SQL:
+            print(f"PRE_SQL: {stmt}", flush=True)
+            run_sql(stmt)
         for stmt in load_statements("run_test_body.sql", **SQL_PARAMS):
             run_sql(stmt)
         elapsed = time.monotonic() - started

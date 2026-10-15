@@ -6,6 +6,7 @@
 # Rows recorded before the CPUs column existed (empty CPUs) count as matching.
 #
 #   ./cyrcle.sh                 run
+#   JAVA_OPTS="-XX:..." GC_LOG=1 PRE_SQL="ALTER SYSTEM SET ..."  extra JVM options / GC log / SQL run before the test
 #   PLAN=1 ./cyrcle.sh          only print what would run / be skipped
 #   16G / 4 CPUs:  CONTAINER_MB=16384 CPUS=4 PAIRS="4096 8192;2048 4096;1024 2048;1024 1024" \
 #                  ROWS="100M 500M 1G 1.44G" bash cyrcle.sh
@@ -74,6 +75,7 @@ for cfg in "${HEAP_DIRECT[@]}"; do
   if ./deploy_dremio.sh --package "$PKG" --storage-path "$SP" --java-version "$JAVA" --name "$C" \
        --container-memory-mb "$CONTAINER_MB" --cpus "$CPUS" \
        --heap-memory-mb "$heap" --direct-memory-mb "$direct" \
+       ${JAVA_OPTS:+--java-opts "$JAVA_OPTS"} ${GC_LOG:+--gc-log} \
        --accept-eula --recreate --dry-run; then
     for rows in $todo; do
       make test-container CONTAINER="$C" ROW_COUNT="$rows" || { echo "FAIL heap=$heap direct=$direct rows=$rows"; break; }

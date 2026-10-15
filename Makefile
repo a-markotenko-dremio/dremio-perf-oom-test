@@ -23,6 +23,7 @@ ROW_COUNT ?= 100000
 data: $(VENV)/.installed
 	$(PYTHON) generate_data.py --rows $(ROW_COUNT) --storage $(STORAGE_PATH)
 
+# PRE_SQL="ALTER SYSTEM SET ...; ..." runs these statements before the test body (see test_catalog_sales.py).
 # Run all tests against the Dremio in a container (as created by deploy_dremio.sh), e.g.:
 #   make test-container CONTAINER=dremio-j17-d27 ROW_COUNT=10000000
 # The container IP, its storage path (unless STORAGE_PATH is given) and the expected heap/direct
@@ -50,15 +51,17 @@ test-container: $(VENV)/.installed
 
 # Create (deploy) a Dremio container with deploy_dremio.sh, e.g.:
 #   make create-container PACKAGE=~/dremio-community-26.0.0.tar.gz JAVA=21 HEAP_MB=8192 DIRECT_MB=16384 CPUS=4
-# Optional: NAME, CONTAINER_MB, INPUT, IMAGE, RECREATE=1 (delete an existing container first).
+# Optional: NAME, CONTAINER_MB, INPUT, IMAGE, RECREATE=1 (delete an existing container first),
+#   JAVA_OPTS="-XX:..." (extra JVM options of Dremio), GC_LOG=1 (GC log in /opt/dremio/log/gc.log).
 # STORAGE_PATH defaults to the one used by `make data`; the EULA is accepted (--accept-eula).
 JAVA ?= 17
 HEAP_MB ?= 4096
 DIRECT_MB ?= 8192
 create-container:
-	@test -n "$(PACKAGE)" || { echo "usage: make create-container PACKAGE=<dremio-*.tar.gz> [STORAGE_PATH=DIR] [JAVA=17] [HEAP_MB=N] [DIRECT_MB=N] [CONTAINER_MB=N] [CPUS=N] [NAME=NAME] [INPUT=PATH|URL] [RECREATE=1]" >&2; exit 2; }
+	@test -n "$(PACKAGE)" || { echo "usage: make create-container PACKAGE=<dremio-*.tar.gz> [STORAGE_PATH=DIR] [JAVA=17] [HEAP_MB=N] [DIRECT_MB=N] [CONTAINER_MB=N] [CPUS=N] [NAME=NAME] [INPUT=PATH|URL] [JAVA_OPTS=OPTS] [GC_LOG=1] [RECREATE=1]" >&2; exit 2; }
 	./deploy_dremio.sh --package "$(PACKAGE)" --storage-path "$(STORAGE_PATH)" --java-version "$(JAVA)" \
 		--heap-memory-mb "$(HEAP_MB)" --direct-memory-mb "$(DIRECT_MB)" --accept-eula \
 		$(if $(CONTAINER_MB),--container-memory-mb "$(CONTAINER_MB)") $(if $(CPUS),--cpus "$(CPUS)") \
 		$(if $(NAME),--name "$(NAME)") $(if $(INPUT),--input "$(INPUT)") $(if $(IMAGE),--image "$(IMAGE)") \
+		$(if $(JAVA_OPTS),--java-opts "$(JAVA_OPTS)") $(if $(GC_LOG),--gc-log) \
 		$(if $(RECREATE),--recreate) $(if $(DRY_RUN),--dry-run)
