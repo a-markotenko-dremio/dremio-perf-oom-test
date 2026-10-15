@@ -41,8 +41,9 @@ test-container: $(VENV)/.installed
 	DIRECT=$$(echo "$$ARGS" | sed -n 's/.*-XX:MaxDirectMemorySize=\([0-9]*\)m.*/\1/p'); \
 	LIMIT=$$($(CT) exec $(CONTAINER) -- cat /sys/fs/cgroup/memory.max 2>/dev/null); \
 	RAM_MB=""; case "$$LIMIT" in ''|max|*[!0-9]*) ;; *) RAM_MB=$$((LIMIT / 1048576));; esac; \
+	CPUS=$$($(CT) exec $(CONTAINER) -- nproc 2>/dev/null); \
 	JVM=$$($(CT) exec $(CONTAINER) -- $$(echo "$$ARGS" | awk '{print $$1}') -version 2>&1 | sed -n 's/.*Runtime Environment.*(build \(.*\))/\1/p'); \
-	echo "==> $(CONTAINER): http://$$IP:9047 (storage $$SP, container $${RAM_MB:-?} MB, heap $${HEAP:-?} MB, direct $${DIRECT:-?} MB, rows $$($(PYTHON) -c 'import results_report as r; print(r.format_rows(r.parse_rows("$(ROW_COUNT)")))'))"; \
+	echo "==> $(CONTAINER): http://$$IP:9047 (storage $$SP, container $${RAM_MB:-?} MB, cpus $${CPUS:-?}, heap $${HEAP:-?} MB, direct $${DIRECT:-?} MB, rows $$($(PYTHON) -c 'import results_report as r; print(r.format_rows(r.parse_rows("$(ROW_COUNT)")))'))"; \
 	DREMIO_URL=http://$$IP:9047 STORAGE_PATH=$$SP ROW_COUNT=$(ROW_COUNT) \
-	HEAP_MB=$$HEAP DIRECT_MB=$$DIRECT JVM_VERSION="$$JVM" CONTAINER_RAM_MB="$$RAM_MB" \
+	HEAP_MB=$$HEAP DIRECT_MB=$$DIRECT JVM_VERSION="$$JVM" CONTAINER_RAM_MB="$$RAM_MB" CONTAINER_CPUS="$$CPUS" \
 	$(PYTHON) -m pytest -v -rs test_environment.py test_catalog_sales.py

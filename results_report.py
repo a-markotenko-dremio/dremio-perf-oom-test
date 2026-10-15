@@ -9,7 +9,7 @@ import socket
 from decimal import Decimal
 from pathlib import Path
 
-COLUMNS = ["Host src", "Data src", "Host dst", "Data dst", "Dremio ver", "JVM ver", "Host RAM",
+COLUMNS = ["Host src", "Data src", "Host dst", "Data dst", "Dremio ver", "JVM ver", "Host RAM", "CPUs",
            "DREMIO_MAX_DIRECT_MEMORY_SIZE_MB", "DREMIO_MAX_HEAP_MEMORY_SIZE_MB", "Rows",
            "Duration (minutes)", "Verdict", "Run by"]
 
@@ -43,6 +43,11 @@ def parse_rows(text):
     return int(value)
 
 
+def cpus():
+    """CPUs available to Dremio: the container's (CONTAINER_CPUS) or, run directly, this host's."""
+    return int(os.environ.get("CONTAINER_CPUS") or os.cpu_count() or 0)
+
+
 def format_rows(n):
     """1440000000 -> '1.44G', 10000000 -> '10M', 100000 -> '100K'."""
     for unit, size in (("G", 10**9), ("M", 10**6), ("K", 10**3)):
@@ -55,10 +60,27 @@ def run_by():
     return os.environ.get("RUN_BY") or getpass.getuser()
 
 
+def _migrate(path):
+    """Rewrites a CSV written with an older column set to the current COLUMNS (new ones empty)."""
+    with path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames == COLUMNS:
+            return
+        old_rows = list(reader)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=COLUMNS, extrasaction="ignore", restval="")
+        w.writeheader()
+        w.writerows(old_rows)
+    tmp.replace(path)
+
+
 def append_row(path, row):
     """Appends `row` (a dict keyed by COLUMNS), writing the header when the file is new."""
     path = Path(path)
     new = not path.exists() or path.stat().st_size == 0
+    if not new:
+        _migrate(path)
     with path.open("a", newline="") as f:
         w = csv.DictWriter(f, fieldnames=COLUMNS)
         if new:

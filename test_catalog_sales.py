@@ -223,6 +223,7 @@ def write_report(run_sql, auth_headers, minutes, verdict):
         "Dremio ver": version,
         "JVM ver": os.environ.get("JVM_VERSION", ""),
         "Host RAM": results_report.host_ram(),
+        "CPUs": results_report.cpus(),
         "DREMIO_MAX_DIRECT_MEMORY_SIZE_MB": mem["direct_max"] // (1024 * 1024),
         "DREMIO_MAX_HEAP_MEMORY_SIZE_MB": mem["heap_max"] // (1024 * 1024),
         "Rows": results_report.format_rows(ROW_COUNT),

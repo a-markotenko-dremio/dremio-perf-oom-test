@@ -309,6 +309,7 @@ make venv
 export DREMIO_URL DREMIO_USER DREMIO_PASSWORD STORAGE_PATH
 export HEAP_MB DIRECT_MB
 export CONTAINER_RAM_MB=$CONTAINER_MB
+export CONTAINER_CPUS=$(cx nproc)
 JVM_VERSION=$(sed -n 's/.*Runtime Environment.*(build \(.*\))/\1/p' <<<"$java_out"); export JVM_VERSION
 [[ -n $ROWS ]] && export ROW_COUNT=$ROWS
 [[ -n $INPUT_PATH_ENV ]] && export INPUT_PATH=$INPUT_PATH_ENV
