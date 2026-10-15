@@ -4,7 +4,9 @@ import getpass
 import math
 import os
 import platform
+import re
 import socket
+from decimal import Decimal
 from pathlib import Path
 
 COLUMNS = ["Host src", "Data src", "Host dst", "Data dst", "Dremio ver", "JVM ver", "Host RAM",
@@ -28,6 +30,17 @@ def host_ram():
         return f"{mb // 1024}G" if mb % 1024 == 0 else f"{mb}M"
     total = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
     return f"{math.ceil(total / 2**30)}G"
+
+
+def parse_rows(text):
+    """'10M' -> 10000000, '1.44G' -> 1440000000, '100K' -> 100000, '12345' -> 12345 (decimal units)."""
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)([KMG]?)", str(text).strip().upper())
+    if not m:
+        raise ValueError(f"invalid row count {text!r}: use a number with an optional K/M/G suffix, e.g. 10M, 1.44G")
+    value = Decimal(m.group(1)) * {"": 1, "K": 10**3, "M": 10**6, "G": 10**9}[m.group(2)]
+    if value != value.to_integral_value():
+        raise ValueError(f"row count {text!r} is not a whole number of rows")
+    return int(value)
 
 
 def format_rows(n):

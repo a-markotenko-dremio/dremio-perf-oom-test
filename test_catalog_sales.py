@@ -12,7 +12,9 @@ Configuration via environment variables:
   DREMIO_TOKEN     personal access token (Bearer), or
   DREMIO_USER / DREMIO_PASSWORD  for login via /apiv2/login (default dremio/dremio123)
   DREMIO_TIMEOUT   seconds allowed for each job to finish (default 3600)
-  ROW_COUNT        number of rows to generate (default 100000, max 2147483647)
+  ROW_COUNT        number of rows to generate, e.g. 10000000, 10M or 1.44G (default 100000, max 2147483647)
+  BLOCKS_DIR       optional directory of generated blocks shared by several STORAGE_PATHs
+                   (<STORAGE_PATH>/blocks becomes a symlink to it; same filesystem recommended)
   STORAGE_PATH     directory where both tables are stored (default /mnt/ubuntu-var/dremio).
                    Two NAS sources are created in Dremio: <STORAGE_PATH>/input and
                    <STORAGE_PATH>/output. The directory must be writable by the Dremio user.
@@ -31,7 +33,7 @@ import results_report
 
 DREMIO_URL = os.environ.get("DREMIO_URL", "http://localhost:9047").rstrip("/")
 TIMEOUT = int(os.environ.get("DREMIO_TIMEOUT", "3600"))
-ROW_COUNT = int(os.environ.get("ROW_COUNT", "100000"))
+ROW_COUNT = results_report.parse_rows(os.environ.get("ROW_COUNT", "100000"))
 REPORT_CSV = Path(os.environ.get("REPORT_CSV", Path(__file__).parent / "test_results.csv"))
 MAX_ROW_COUNT = 2**31 - 1  # ids are generated as INT in generate_data.py
 
@@ -234,7 +236,7 @@ def write_report(run_sql, auth_headers, minutes, verdict):
 def test_output_row_count_matches_input(prepared_data, run_sql, count_rows, auth_headers):
     input_count = count_rows(INPUT_TABLE)
     assert input_count == ROW_COUNT, \
-        f"Input table has {input_count} rows, expected {ROW_COUNT}"
+        f"Input table has {input_count} rows, expected {ROW_COUNT} ({results_report.format_rows(ROW_COUNT)})"
 
     clean_output_table(run_sql)
     verdict = "FAIL"

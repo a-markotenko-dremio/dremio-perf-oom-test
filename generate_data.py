@@ -7,7 +7,12 @@ A block is generated once and then reused by every later run. The table folder
 is assembled from the blocks needed for the requested row count (hard links, so no extra
 disk space; falls back to copying when links are not possible).
 
+Shared blocks: with BLOCKS_DIR=<dir> (or --blocks-dir) <storage>/blocks becomes a symlink to that
+directory, so every storage path (one per container) reuses the same blocks instead of keeping
+its own copy. The directory should be on the same filesystem as the storage paths (hard links).
+
 Usage: python generate_data.py --rows 1440000000 [--storage /mnt/ubuntu-var/dremio]
+                               [--blocks-dir /mnt/ubuntu-var/dremio/blocks]
 """
 import argparse
 import os
@@ -15,6 +20,8 @@ import shutil
 from pathlib import Path
 
 import duckdb
+
+import results_report
 
 BLOCK_ROWS = 10_000_000
 TABLE_SUBDIR = Path("input/STACKIT_S3/tpcds-1tb-flat/catalog_sales")
@@ -46,9 +53,35 @@ def block_plan(total_rows, block_rows=BLOCK_ROWS):
             for first in range(0, total_rows, block_rows)]
 
 
-def generate(total_rows, storage, block_rows=BLOCK_ROWS, log=print):
-    """Ensures the blocks exist and assembles the table folder. Returns the folder."""
+def link_shared_blocks(storage, shared, log=print):
+    """Makes <storage>/blocks a symlink to the shared blocks directory (created if missing)."""
+    shared = Path(shared).resolve()
+    shared.mkdir(parents=True, exist_ok=True)
+    link = Path(storage) / "blocks"
+    if link.is_symlink():
+        if link.resolve() == shared:
+            return
+        link.unlink()
+    elif link.exists():
+        if any(link.iterdir()):
+            raise RuntimeError(
+                f"{link} is a non-empty directory, not a symlink to {shared}: move its blocks into "
+                f"the shared directory (mv {link}/* {shared}/) and remove it, or unset BLOCKS_DIR")
+        link.rmdir()
+    link.symlink_to(shared, target_is_directory=True)
+    log(f"{link} -> {shared}")
+
+
+def generate(total_rows, storage, block_rows=BLOCK_ROWS, log=print, blocks_dir_shared=None):
+    """Ensures the blocks exist and assembles the table folder. Returns the folder.
+
+    blocks_dir_shared (default: $BLOCKS_DIR) is a directory of blocks shared by several storages.
+    """
     storage = Path(storage)
+    storage.mkdir(parents=True, exist_ok=True)
+    shared = blocks_dir_shared or os.environ.get("BLOCKS_DIR")
+    if shared:
+        link_shared_blocks(storage, shared, log)
     blocks_dir = storage / "blocks"
     table_dir = storage / TABLE_SUBDIR
     blocks_dir.mkdir(parents=True, exist_ok=True)
@@ -61,7 +94,7 @@ def generate(total_rows, storage, block_rows=BLOCK_ROWS, log=print):
         wanted[path.name] = path
         if path.exists():
             continue
-        tmp = path.with_suffix(".tmp")
+        tmp = path.with_suffix(f".{os.getpid()}.tmp")  # unique: runs may share the blocks directory
         con.execute(f"COPY ({block_query(first, rows)}) TO '{tmp}' (FORMAT parquet, COMPRESSION zstd)")
         tmp.rename(path)
         log(f"generated block {n}/{len(plan)}: {path.name}")
@@ -84,7 +117,10 @@ def generate(total_rows, storage, block_rows=BLOCK_ROWS, log=print):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--rows", type=int, required=True)
+    ap.add_argument("--rows", type=results_report.parse_rows, required=True, metavar="N",
+                    help="number of rows, e.g. 10000000, 10M or 1.44G")
     ap.add_argument("--storage", default=os.environ.get("STORAGE_PATH", "/mnt/ubuntu-var/dremio"))
+    ap.add_argument("--blocks-dir", default=os.environ.get("BLOCKS_DIR"), metavar="DIR",
+                    help="directory of blocks shared by several storages (default: $BLOCKS_DIR)")
     a = ap.parse_args()
-    print(generate(a.rows, a.storage))
+    print(generate(a.rows, a.storage, blocks_dir_shared=a.blocks_dir))

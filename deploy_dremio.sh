@@ -24,7 +24,7 @@ Options:
   --input PATH|URL           input data: a local directory (mounted read-only at the same
                              path) or a MinIO/S3 endpoint over TCP (http[s]://host:port[/bucket]
                              or s3://host:port[/bucket]); exported to the tests as INPUT_PATH
-  --name NAME                container name (default: dremio-j<java>-d<dremio major>-<memory>, e.g. dremio-j17-d27-14G)
+  --name NAME                container name (default: d<dremio version>-j<java>-<memory>, e.g. d26-1-8-j21-16G)
   --cpus N                   CPU limit of the container (default: unlimited)
   --image IMAGE              base image, used as is (default: a local cached image perf-java<N> with
                              OpenJDK and curl preinstalled, built from images:ubuntu/22.04 for incus
@@ -33,7 +33,8 @@ Options:
   --recreate                 delete the container first if it already exists
   --accept-eula              accept the Dremio EULA via POST /apiv2/eula/accept (you confirm
                              that you have read and agree to the license terms)
-  --rows N                   number of rows of the generated input table, 1..2147483647 (exported
+  --rows N                   number of rows of the generated input table, e.g. 10000000, 10M,
+                             1.44G; 1..2147483647 (exported
                              as ROW_COUNT; default: the ROW_COUNT environment variable, else 100000).
                              Data is generated in reusable 10M-row blocks under STORAGE_PATH/blocks
   --allow-shared-storage     do not stop if another running container already mounts the same
@@ -81,8 +82,12 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 [[ $PACKAGE == *.tar.gz || $PACKAGE == *.tgz ]] || die "only tarball packages (.tar.gz) are supported"
 ROWS=${ROWS:-${ROW_COUNT:-}}
 if [[ -n $ROWS ]]; then
-    [[ $ROWS =~ ^[0-9]+$ ]] && (( ROWS >= 1 && ROWS <= 2147483647 )) \
-        || die "--rows must be an integer in 1..2147483647, got '$ROWS'"
+    # number with an optional K/M/G suffix (decimal): 10M -> 10000000, 1.44G -> 1440000000
+    [[ $ROWS =~ ^([0-9]+(\.[0-9]+)?)([KkMmGg]?)$ ]] \
+        || die "--rows must be a number with an optional K/M/G suffix (e.g. 10M, 1.44G), got '$ROWS'"
+    case ${BASH_REMATCH[3]} in [Kk]) mult=1000 ;; [Mm]) mult=1000000 ;; [Gg]) mult=1000000000 ;; *) mult=1 ;; esac
+    ROWS=$(awk -v v="${BASH_REMATCH[1]}" -v m="$mult" 'BEGIN { printf "%.0f", v * m }')
+    (( ROWS >= 1 && ROWS <= 2147483647 )) || die "--rows must be in 1..2147483647 rows, got $ROWS"
 fi
 for v in JAVA_VERSION HEAP_MB DIRECT_MB; do
     [[ ${!v} =~ ^[0-9]+$ ]] || die "$v must be a positive integer"
@@ -91,11 +96,15 @@ CONTAINER_MB=${CONTAINER_MB:-$((HEAP_MB + DIRECT_MB + 2048))}
 [[ $CONTAINER_MB =~ ^[0-9]+$ ]] || die "--container-memory-mb must be an integer"
 (( HEAP_MB + DIRECT_MB < CONTAINER_MB )) \
     || die "heap ($HEAP_MB) + direct ($DIRECT_MB) MB must be less than container memory ($CONTAINER_MB MB)"
-# Default container name: dremio-j<java>-d<dremio major version from the package file name>-<memory>
-# where <memory> is the container memory limit (e.g. 14G, or 1500M when not a whole number of GB)
+# Default container name: d<dremio version>-j<java>-<memory>, e.g. d26-1-8-j21-16G. The version comes
+# from the package file name; dots become hyphens because instance names allow only alphanumerics
+# and hyphens. <memory> is the container memory limit (14G, or 1500M when not a whole number of GB).
 if [[ -z $NAME ]]; then
-    NAME=dremio-j${JAVA_VERSION}
-    [[ $(basename "$PACKAGE") =~ -([0-9]+)\.[0-9]+\.[0-9]+ ]] && NAME+=-d${BASH_REMATCH[1]}
+    NAME=""
+    if [[ $(basename "$PACKAGE") =~ -([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+        NAME=d${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}-
+    fi
+    NAME+=j${JAVA_VERSION}
     if (( CONTAINER_MB % 1024 == 0 )); then NAME+=-$((CONTAINER_MB / 1024))G; else NAME+=-${CONTAINER_MB}M; fi
 fi
 
