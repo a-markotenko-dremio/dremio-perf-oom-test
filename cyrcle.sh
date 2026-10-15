@@ -7,14 +7,17 @@
 #
 #   ./cyrcle.sh                 run
 #   PLAN=1 ./cyrcle.sh          only print what would run / be skipped
+#   16G / 4 CPUs:  CONTAINER_MB=16384 CPUS=4 PAIRS="4096 8192;2048 4096;1024 2048;1024 1024" \
+#                  ROWS="100M 500M 1G 1.44G" bash cyrcle.sh
 cd "$(dirname "$0")" || exit 1
 
 PKG=${PKG:-/mnt/ubuntu-var/dremio/Downloads/dremio-enterprise-26.1.10-202607291955500295-6a7e3d8c.tar.gz}
 JAVA=${JAVA:-21}
 CONTAINER_MB=${CONTAINER_MB:-4096}
 CPUS=${CPUS:-4}                          # same CPU count on every server, so that results compare
-HEAP_DIRECT=("2048 1024" "1536 1024" "1024 1024" "1024 512" "768 512")
-ROWS=(10M 50M 100M 200M 500M)
+# PAIRS="heap direct;heap direct;..." and ROWS="10M 50M ..." (ascending) override the 4G defaults
+IFS=';' read -r -a HEAP_DIRECT <<< "${PAIRS:-2048 1024;1536 1024;1024 1024;1024 512;768 512}"
+read -r -a ROWS <<< "${ROWS:-10M 50M 100M 200M 500M}"
 CSV=${REPORT_CSV:-test_results.csv}
 # Generated data blocks shared by all storage paths (<storage>/blocks -> this directory)
 export BLOCKS_DIR=${BLOCKS_DIR:-/mnt/ubuntu-var/dremio/blocks}
