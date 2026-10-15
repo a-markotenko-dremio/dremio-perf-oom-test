@@ -1,7 +1,7 @@
 VENV := .venv
 PYTHON := $(VENV)/bin/python
 
-.PHONY: test test-container venv clean data
+.PHONY: test test-container create-container venv clean data
 
 test: $(VENV)/.installed
 	$(PYTHON) -m pytest -v -rs test_catalog_sales.py
@@ -47,3 +47,18 @@ test-container: $(VENV)/.installed
 	DREMIO_URL=http://$$IP:9047 STORAGE_PATH=$$SP ROW_COUNT=$(ROW_COUNT) \
 	HEAP_MB=$$HEAP DIRECT_MB=$$DIRECT JVM_VERSION="$$JVM" CONTAINER_RAM_MB="$$RAM_MB" CONTAINER_CPUS="$$CPUS" \
 	$(PYTHON) -m pytest -v -rs test_environment.py test_catalog_sales.py
+
+# Create (deploy) a Dremio container with deploy_dremio.sh, e.g.:
+#   make create-container PACKAGE=~/dremio-community-26.0.0.tar.gz JAVA=21 HEAP_MB=8192 DIRECT_MB=16384 CPUS=4
+# Optional: NAME, CONTAINER_MB, INPUT, IMAGE, RECREATE=1 (delete an existing container first).
+# STORAGE_PATH defaults to the one used by `make data`; the EULA is accepted (--accept-eula).
+JAVA ?= 17
+HEAP_MB ?= 4096
+DIRECT_MB ?= 8192
+create-container:
+	@test -n "$(PACKAGE)" || { echo "usage: make create-container PACKAGE=<dremio-*.tar.gz> [STORAGE_PATH=DIR] [JAVA=17] [HEAP_MB=N] [DIRECT_MB=N] [CONTAINER_MB=N] [CPUS=N] [NAME=NAME] [INPUT=PATH|URL] [RECREATE=1]" >&2; exit 2; }
+	./deploy_dremio.sh --package "$(PACKAGE)" --storage-path "$(STORAGE_PATH)" --java-version "$(JAVA)" \
+		--heap-memory-mb "$(HEAP_MB)" --direct-memory-mb "$(DIRECT_MB)" --accept-eula \
+		$(if $(CONTAINER_MB),--container-memory-mb "$(CONTAINER_MB)") $(if $(CPUS),--cpus "$(CPUS)") \
+		$(if $(NAME),--name "$(NAME)") $(if $(INPUT),--input "$(INPUT)") $(if $(IMAGE),--image "$(IMAGE)") \
+		$(if $(RECREATE),--recreate) $(if $(DRY_RUN),--dry-run)
