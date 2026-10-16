@@ -49,5 +49,7 @@ create-container:
 		$(if $(JAVA_OPTS),--java-opts "$(JAVA_OPTS)") $(if $(GC_LOG),--gc-log) \
 		$(if $(RECREATE),--recreate) $(if $(DRY_RUN),--dry-run)
 
+# SVG report of the results, e.g.: make report CSV="data/test_results_den.csv data/test_results_home4.csv"
+CSV ?= data/test_results.csv
 report: $(VENV)/.installed
-	$(VENV)/bin/python3 make_report_svg.py test_results.csv -o report.svg
+	$(VENV)/bin/python3 make_report_svg.py $(CSV) -o report.svg

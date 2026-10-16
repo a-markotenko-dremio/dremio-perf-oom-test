@@ -13,7 +13,7 @@
   PRE_SQL          optional ';'-separated statements run before the test body, e.g. to raise the parallelism:
                    "ALTER SYSTEM SET planner.width.max_per_node = 28; ALTER SYSTEM SET planner.width.max_per_query = 1000".
                    Use ALTER SYSTEM: every job is its own session, so ALTER SESSION would not reach the test body.
-  REPORT_CSV       CSV the run is appended to (default test_results.csv next to the tests)
+  REPORT_CSV       CSV the run is appended to (default data/test_results.csv); the traceback log of a failed run goes next to it
   HEAP_MB / DIRECT_MB / JVM_VERSION / CONTAINER_RAM_MB / CONTAINER_CPUS
                    what the Dremio under test was configured with (set by deploy_dremio.sh and
                    scripts/test_container.sh); they go to the report as they are
@@ -27,13 +27,13 @@ DREMIO_URL = os.environ.get("DREMIO_URL", "http://localhost:9047").rstrip("/")
 TIMEOUT = int(os.environ.get("DREMIO_TIMEOUT", "3600"))
 ROW_COUNT = results_report.parse_rows(os.environ.get("ROW_COUNT", "100000"))
 MAX_ROW_COUNT = 2**31 - 1  # ids are generated as INT in generate_data.py
-REPORT_CSV = Path(os.environ.get("REPORT_CSV", Path(__file__).parent / "test_results.csv"))
+DATA_DIR = Path(__file__).parent / "data"  # the SQL files and the result CSVs
+REPORT_CSV = Path(os.environ.get("REPORT_CSV", DATA_DIR / "test_results.csv"))
 
 STORAGE_PATH = Path(os.environ.get("STORAGE_PATH", "/mnt/ubuntu-var/dremio"))
 INPUT_SOURCE = "perf_input"
 OUTPUT_SOURCE = "perf_output"
 
-SQL_DIR = Path(__file__).parent
 INPUT_TABLE_PATH = [INPUT_SOURCE, "STACKIT_S3", "tpcds-1tb-flat", "catalog_sales"]
 INPUT_TABLE = f'"{INPUT_SOURCE}".STACKIT_S3."tpcds-1tb-flat".catalog_sales'
 OUTPUT_TABLE = f'"{OUTPUT_SOURCE}"."tpcds-1tb".catalog_sales'
@@ -46,8 +46,8 @@ def split_statements(text):
 
 
 def load_statements(filename, **params):
-    """Statements of an SQL file with ${NAME} placeholders replaced."""
-    text = (SQL_DIR / filename).read_text()
+    """Statements of an SQL file in data/ with ${NAME} placeholders replaced."""
+    text = (DATA_DIR / filename).read_text()
     for key, value in params.items():
         text = text.replace("${%s}" % key, str(value))
     return split_statements(text)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # OOM threshold search: for each (heap, direct) pair deploy a container with a fixed memory and CPU
 # count, run the test on growing row counts until it fails, then delete the container.
-# Combinations already present in test_results.csv (same Dremio version, memory, CPUs, heap, direct,
+# Combinations already present in data/test_results.csv (same Dremio version, memory, CPUs, heap, direct,
 # rows) are skipped; a FAIL recorded there ends the row sweep for that pair, like a fresh failure.
 #
 #   ./cyrcle.sh                 run
@@ -23,7 +23,7 @@ for cfg in "${HEAP_DIRECT[@]}"; do
   set -- $cfg
   (( $1 % 2 == 0 )) || { echo "heap $1 in PAIRS must be even: the JVM rounds odd values up to the next even MB" >&2; exit 2; }
 done
-CSV=${REPORT_CSV:-test_results.csv}
+CSV=${REPORT_CSV:-data/test_results.csv}
 # Generated data blocks shared by all storage paths (<storage>/blocks -> this directory)
 export BLOCKS_DIR=${BLOCKS_DIR:-/mnt/ubuntu-var/dremio/blocks}
 

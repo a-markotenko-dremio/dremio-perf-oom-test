@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Draws an SVG analysis of the test runs (PASS/FAIL against heap, direct memory and rows).
 
-    python3 make_report_svg.py test_results_home4.csv [more.csv ...] [-o report.svg]
+    python3 make_report_svg.py data/test_results_home4.csv [more.csv ...] [-o report.svg]
 
 What the three sections show is described in report_svg.py.
 """
