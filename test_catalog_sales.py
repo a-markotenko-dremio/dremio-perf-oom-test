@@ -219,8 +219,16 @@ def query_rows(run_sql, auth_headers, sql):
     return res.json()["rows"]
 
 
+def configured_mb(env_name, reported_bytes):
+    """The memory limit as configured (HEAP_MB / DIRECT_MB, set by deploy_dremio.sh and `make test-container`),
+    so that the report shows 445 for -Xmx445m: the JVM rounds the limit it reports (sys.memory says 446).
+    Without the variable the value reported by Dremio is used."""
+    value = os.environ.get(env_name, "").strip()
+    return int(value) if value.isdigit() else reported_bytes // (1024 * 1024)
+
+
 def write_report(run_sql, auth_headers, minutes, verdict, started_at):
-    """Adds this run to REPORT_CSV; what Dremio reports about itself is queried from Dremio."""
+    """Adds this run to REPORT_CSV; what Dremio reports about itself (version) is queried from Dremio; the memory limits are the configured ones."""
     version = query_rows(run_sql, auth_headers, "SELECT version FROM sys.nodes")[0]["version"]
     mem = query_rows(run_sql, auth_headers, "SELECT heap_max, direct_max FROM sys.memory")[0]
     host = results_report.host_name()
@@ -232,8 +240,8 @@ def write_report(run_sql, auth_headers, minutes, verdict, started_at):
         "JVM ver": os.environ.get("JVM_VERSION", ""),
         "Host RAM": results_report.host_ram(),
         "CPUs": results_report.cpus(),
-        "DREMIO_MAX_DIRECT_MEMORY_SIZE_MB": mem["direct_max"] // (1024 * 1024),
-        "DREMIO_MAX_HEAP_MEMORY_SIZE_MB": mem["heap_max"] // (1024 * 1024),
+        "DREMIO_MAX_DIRECT_MEMORY_SIZE_MB": configured_mb("DIRECT_MB", mem["direct_max"]),
+        "DREMIO_MAX_HEAP_MEMORY_SIZE_MB": configured_mb("HEAP_MB", mem["heap_max"]),
         "Rows": results_report.format_rows(ROW_COUNT),
         "Duration (minutes)": f"{minutes:.1f}",
         "Verdict": verdict,
