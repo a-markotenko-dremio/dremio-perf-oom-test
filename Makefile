@@ -65,3 +65,6 @@ create-container:
 		$(if $(NAME),--name "$(NAME)") $(if $(INPUT),--input "$(INPUT)") $(if $(IMAGE),--image "$(IMAGE)") \
 		$(if $(JAVA_OPTS),--java-opts "$(JAVA_OPTS)") $(if $(GC_LOG),--gc-log) \
 		$(if $(RECREATE),--recreate) $(if $(DRY_RUN),--dry-run)
+
+report: $(VENV)/.installed
+	$(VENV)/bin/python3 make_report_svg.py test_results.csv -o report.svg
