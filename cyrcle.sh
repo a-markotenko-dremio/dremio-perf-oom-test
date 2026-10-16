@@ -10,6 +10,7 @@
 #   16G / 4 CPUs:  CONTAINER_MB=16384 CPUS=4 PAIRS="4096 8192;2048 4096;1024 2048;1024 1024" \
 #                  ROWS="100M 500M 1G 1.44G" bash cyrcle.sh
 cd "$(dirname "$0")" || exit 1
+source scripts/lib/common.sh
 
 PKG=${PKG:-/mnt/ubuntu-var/dremio/Downloads/dremio-enterprise-26.1.10-202607291955500295-6a7e3d8c.tar.gz}
 JAVA=${JAVA:-21}
@@ -26,28 +27,17 @@ CSV=${REPORT_CSV:-test_results.csv}
 # Generated data blocks shared by all storage paths (<storage>/blocks -> this directory)
 export BLOCKS_DIR=${BLOCKS_DIR:-/mnt/ubuntu-var/dremio/blocks}
 
-CT=$(command -v incus >/dev/null && echo incus || echo lxc)
+[[ -n ${PLAN:-} ]] || detect_container_cli  # a plan needs no container CLI
 # "26.1.10-202607291955500295-6a7e3d8c": the Dremio version column of the CSV
 VER=$(basename "$PKG" .tar.gz | sed -E 's/^[^0-9]*//')
 RAM="$((CONTAINER_MB / 1024))G"
-# Same name as deploy_dremio.sh builds by default: d<version>-j<java>-<memory>-<cpus>cpu
-C=$(echo "$VER" | sed -E 's/^([0-9]+)\.([0-9]+)\.([0-9]+).*/d\1-\2-\3/')-j$JAVA-$RAM-${CPUS}cpu
+C=$(default_container_name "$PKG" "$JAVA" "$CONTAINER_MB" "$CPUS")  # the name deploy_dremio.sh builds by default
 SP=/mnt/ubuntu-var/dremio/$C
 
 # Prints PASS/FAIL if the CSV already has this combination, nothing otherwise.
 recorded() {  # heap direct rows
   [[ -f $CSV ]] || return 0
-  python3 -I - "$CSV" "$VER" "$RAM" "$CPUS" "$2" "$1" "$3" <<'EOF'
-import csv, sys
-path, ver, ram, cpus, direct, heap, rows = sys.argv[1:]
-with open(path, newline="") as f:
-    for r in csv.DictReader(f):
-        if (r["Dremio ver"], r["Host RAM"], r["DREMIO_MAX_DIRECT_MEMORY_SIZE_MB"],
-            r["DREMIO_MAX_HEAP_MEMORY_SIZE_MB"], r["Rows"]) == (ver, ram, direct, heap, rows) \
-           and r.get("CPUs", "") == cpus:
-            print(r["Verdict"])
-            break
-EOF
+  python3 -I scripts/recorded_verdict.py "$CSV" "$VER" "$RAM" "$CPUS" "$2" "$1" "$3"
 }
 
 # Rows still to run for a pair: everything after the recorded ones, up to a recorded FAIL.
