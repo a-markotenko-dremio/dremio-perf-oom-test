@@ -39,4 +39,4 @@ ROWS_LABEL=$("$PYTHON" -c 'import sys, results_report as r; print(r.format_rows(
 echo "==> $CONTAINER: http://$IP:9047 (storage $STORAGE_PATH, container ${CONTAINER_RAM_MB:-?} MB, cpus ${CONTAINER_CPUS:-?}, heap ${HEAP_MB:-?} MB, direct ${DIRECT_MB:-?} MB, rows $ROWS_LABEL)"
 
 export DREMIO_URL=http://$IP:9047 STORAGE_PATH ROW_COUNT HEAP_MB DIRECT_MB JVM_VERSION CONTAINER_RAM_MB CONTAINER_CPUS
-exec "$PYTHON" -m pytest -v -rs test_environment.py test_catalog_sales.py
+exec "$PYTHON" -m pytest -v -rs tests

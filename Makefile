@@ -1,10 +1,10 @@
 VENV := .venv
 PYTHON := $(VENV)/bin/python
 
-.PHONY: test test-container create-container venv clean data
+.PHONY: test test-container create-container venv clean data report
 
 test: $(VENV)/.installed
-	$(PYTHON) -m pytest -v -rs test_catalog_sales.py
+	$(PYTHON) -m pytest -v -rs tests/test_catalog_sales.py
 
 venv: $(VENV)/.installed
 
@@ -52,4 +52,4 @@ create-container:
 # SVG report of the results, e.g.: make report CSV="data/test_results_den.csv data/test_results_home4.csv"
 CSV ?= data/test_results.csv
 report: $(VENV)/.installed
-	$(VENV)/bin/python3 make_report_svg.py $(CSV) -o report.svg
+	$(PYTHON) -m report $(CSV) -o report.svg

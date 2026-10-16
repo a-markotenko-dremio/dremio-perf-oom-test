@@ -1,4 +1,4 @@
-"""The SVG report: three sections drawn with svg_canvas from the data of report_data.
+"""The SVG report: three sections drawn with canvas from the runs of runs.
 
   1. Heap needed vs rows: per row count the "safe heap" (the lowest tested heap above the highest
      failed one, so every larger heap passed); the bar below it reaches down to the highest failed
@@ -13,9 +13,9 @@ from collections import defaultdict
 from html import escape
 
 import results_report
-from report_data import by_heap, frontier
-from svg_canvas import (CSS, DARK, LEFT, LIGHT, PW, SERIES, W, Svg, fmt_mb, nice_ticks,
-                        section_header, y_axis)
+from .runs import by_heap, frontier
+from .canvas import (CSS, DARK, LEFT, LIGHT, PW, SERIES, W, Svg, fmt_mb, nice_ticks,
+                     section_header, y_axis)
 
 
 # ------------------------------------------------------------------ 1. heap needed vs rows

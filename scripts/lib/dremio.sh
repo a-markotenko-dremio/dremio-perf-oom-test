@@ -64,7 +64,7 @@ run_tests() {
     JVM_VERSION=$(sed -n 's/.*Runtime Environment.*(build \(.*\))/\1/p' <<<"$java_out"); export JVM_VERSION
     [[ -n $ROWS ]] && export ROW_COUNT=$ROWS
     [[ -n $INPUT_PATH_ENV ]] && export INPUT_PATH=$INPUT_PATH_ENV
-    pytest_args=(-v -rs test_environment.py test_catalog_sales.py)
+    pytest_args=(-v -rs tests)
     (( DRY_RUN )) && pytest_args+=(--dry-run)
 
     log "Running pytest$([[ $DRY_RUN == 1 ]] && echo ' (dry-run)') against $DREMIO_URL"

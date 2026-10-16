@@ -1,14 +1,13 @@
-#!/usr/bin/env python3
 """Draws an SVG analysis of the test runs (PASS/FAIL against heap, direct memory and rows).
 
-    python3 make_report_svg.py data/test_results_home4.csv [more.csv ...] [-o report.svg]
+    python3 -m report data/test_results_home4.csv [more.csv ...] [-o report.svg]
 
-What the three sections show is described in report_svg.py.
+What the three sections show is described in svg.py.
 """
 import argparse
 
-from report_data import load, summary
-from report_svg import render
+from .runs import load, summary
+from .svg import render
 
 
 def main():
