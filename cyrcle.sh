@@ -14,6 +14,7 @@ source scripts/lib/common.sh
 
 PKG=${PKG:-/mnt/ubuntu-var/dremio/Downloads/dremio-enterprise-26.1.10-202607291955500295-6a7e3d8c.tar.gz}
 JAVA=${JAVA:-21}
+JAVA_IMAGE=${JAVA_IMAGE:-}               # a Docker image with the Java (cgr.dev/chainguard/jdk:latest-dev); replaces JAVA
 CONTAINER_MB=${CONTAINER_MB:-4096}
 CPUS=${CPUS:-4}                          # same CPU count on every server, so that results compare
 # PAIRS="heap direct;heap direct;..." and ROWS="10M 50M ..." (ascending) override the 4G defaults
@@ -31,13 +32,14 @@ export BLOCKS_DIR=${BLOCKS_DIR:-/mnt/ubuntu-var/dremio/blocks}
 # "26.1.10-202607291955500295-6a7e3d8c": the Dremio version column of the CSV
 VER=$(basename "$PKG" .tar.gz | sed -E 's/^[^0-9]*//')
 RAM="$((CONTAINER_MB / 1024))G"
-C=$(default_container_name "$PKG" "$JAVA" "$CONTAINER_MB" "$CPUS")  # the name deploy_dremio.sh builds by default
+JAVA_VERSION=$JAVA  # for java_label
+C=$(default_container_name "$PKG" "$(java_label)" "$CONTAINER_MB" "$CPUS")  # the name deploy_dremio.sh builds by default
 SP=/mnt/ubuntu-var/dremio/$C
 
 # Prints PASS/FAIL if the CSV already has this combination, nothing otherwise.
 recorded() {  # heap direct rows
   [[ -f $CSV ]] || return 0
-  python3 -I scripts/recorded_verdict.py "$CSV" "$VER" "$RAM" "$CPUS" "$2" "$1" "$3"
+  python3 -I scripts/recorded_verdict.py "$CSV" "$VER" "$RAM" "$CPUS" "$2" "$1" "$3" "$JAVA_IMAGE"
 }
 
 # Rows still to run for a pair: everything after the recorded ones, up to a recorded FAIL.
@@ -50,6 +52,7 @@ pending() {  # heap direct
   done
 }
 
+if [[ -n $JAVA_IMAGE ]]; then JAVA_ARGS=(--java-image "$JAVA_IMAGE"); else JAVA_ARGS=(--java-version "$JAVA"); fi
 echo "container=$C storage=$SP blocks=$BLOCKS_DIR cpus=$CPUS memory=$RAM"
 for cfg in "${HEAP_DIRECT[@]}"; do
   set -- $cfg
@@ -65,7 +68,7 @@ for cfg in "${HEAP_DIRECT[@]}"; do
   echo "    to run: $(echo $todo)"
   [[ -n ${PLAN:-} ]] && continue
 
-  if ./deploy_dremio.sh --package "$PKG" --storage-path "$SP" --java-version "$JAVA" --name "$C" \
+  if ./deploy_dremio.sh --package "$PKG" --storage-path "$SP" "${JAVA_ARGS[@]}" --name "$C" \
        --container-memory-mb "$CONTAINER_MB" --cpus "$CPUS" \
        --heap-memory-mb "$heap" --direct-memory-mb "$direct" \
        ${JAVA_OPTS:+--java-opts "$JAVA_OPTS"} ${GC_LOG:+--gc-log} \

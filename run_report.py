@@ -14,6 +14,12 @@ def configured_mb(env_name, reported_bytes):
     return int(value) if value.isdigit() else reported_bytes // (1024 * 1024)
 
 
+def jvm_version():
+    """The JVM of the run; with a Java Docker image (JAVA_IMAGE) its name is added, "21.0.12+1 (cgr.dev/...)"."""
+    jvm, image = os.environ.get("JVM_VERSION", ""), os.environ.get("JAVA_IMAGE", "")
+    return f"{jvm} ({image})" if image else jvm
+
+
 def write_report(dremio, minutes, verdict, started_at):
     """Adds this run to REPORT_CSV. The Dremio version is queried from Dremio; the memory limits are
     the configured ones."""
@@ -25,7 +31,7 @@ def write_report(dremio, minutes, verdict, started_at):
         "Host src": host, "Data src": "dir/Parquet",
         "Host dst": host, "Data dst": "dir/Iceberg",
         "Dremio ver": version,
-        "JVM ver": os.environ.get("JVM_VERSION", ""),
+        "JVM ver": jvm_version(),
         "Host RAM": results_report.host_ram(),
         "CPUs": results_report.cpus(),
         "DREMIO_MAX_DIRECT_MEMORY_SIZE_MB": configured_mb("DIRECT_MB", mem["direct_max"]),

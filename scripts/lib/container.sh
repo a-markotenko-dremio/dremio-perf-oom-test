@@ -1,6 +1,12 @@
-# Sourced by deploy_dremio.sh. Creates the container and installs Java and Dremio in it.
+# Sourced by deploy_dremio.sh. Creates the container and installs Java (or Docker and the Java image) and Dremio in it.
 
 cx() { $CT exec "$NAME" -- "$@"; }  # run a command in the container
+
+# Runs the java Dremio runs with: from the Java image with --java-image, else the one in the container.
+run_java() {
+    if [[ -n $JAVA_IMAGE ]]; then cx docker run --rm --entrypoint "$JAVA_HOME_DIR/bin/java" "$JAVA_IMAGE" "$@"
+    else cx "$JAVA_HOME_DIR/bin/java" "$@"; fi
+}
 
 # Two Dremios on one STORAGE_PATH share input/ and output/: concurrent test runs collide
 # (e.g. "Folder already exists" on CREATE TABLE). Use a separate --storage-path per container.
@@ -29,6 +35,7 @@ create_container() {
     log "Creating container $NAME from $IMAGE (memory ${CONTAINER_MB}MiB)"
     launch_args=(-c "limits.memory=${CONTAINER_MB}MiB")
     [[ -n $CPUS ]] && launch_args+=(-c "limits.cpu=$CPUS")
+    if [[ -n $JAVA_IMAGE ]]; then read -r -a docker_args <<<"$(docker_launch_args)"; launch_args+=("${docker_args[@]}"); fi
     $CT launch "$IMAGE" "$NAME" "${launch_args[@]}"
 
     # Same path inside and outside, so the tests on the host and Dremio see the same files.
@@ -48,8 +55,31 @@ wait_for_network() {
     cx getent hosts archive.ubuntu.com >/dev/null 2>&1 || die "container has no network/DNS"
 }
 
-# Installs OpenJDK if the image lacks it and finds JAVA_HOME_DIR.
+# Prepares the Java: OpenJDK in the container, or with --java-image the image in Docker. Sets JAVA_HOME_DIR
+# (the Java home inside the image in the second case).
 install_java() {
+    if [[ -n $JAVA_IMAGE ]]; then install_java_image; else install_java_apt; fi
+}
+
+# Pulls the Java image into the Docker of the container and finds JAVA_HOME_DIR in it.
+install_java_image() {
+    log "Waiting for Docker in the container"
+    for _ in $(seq 30); do cx docker info >/dev/null 2>&1 && break; sleep 2; done
+    cx docker info >/dev/null 2>&1 || die "Docker does not run in the container (see: $CT exec $NAME -- journalctl -u docker)"
+    if [[ -n $DOCKER_CONFIG_FILE ]]; then
+        cx mkdir -p /root/.docker
+        $CT file push "$DOCKER_CONFIG_FILE" "$NAME/root/.docker/config.json"
+    fi
+    log "Pulling $JAVA_IMAGE"
+    cx docker pull "$JAVA_IMAGE" >/dev/null \
+        || die "cannot pull $JAVA_IMAGE (a tag that needs a login? pass --docker-config ~/.docker/config.json)"
+    cx docker run --rm --entrypoint bash "$JAVA_IMAGE" -c "command -v java" >/dev/null \
+        || die "$JAVA_IMAGE has no bash or java: Dremio's bin/dremio needs both (use a -dev image)"
+    JAVA_HOME_DIR=$(cx docker run --rm --entrypoint bash "$JAVA_IMAGE" -c 'dirname $(dirname $(readlink -f $(command -v java)))')
+}
+
+# Installs OpenJDK if the container lacks it and finds JAVA_HOME_DIR.
+install_java_apt() {
     if cx bash -c "ls /usr/lib/jvm/java-${JAVA_VERSION}-openjdk-*/bin/java && command -v curl" >/dev/null 2>&1; then
         log "OpenJDK $JAVA_VERSION already in the image"
     else
@@ -96,7 +126,35 @@ configure_dremio() {
     fi
     cx bash -c "mkdir -p /opt/dremio/log; chown -R dremio:$HOST_GID /opt/dremio"
 
-    cx bash -c "cat > /etc/systemd/system/dremio.service" <<EOF
+    write_service_unit
+    cx systemctl daemon-reload
+    cx systemctl enable --now dremio
+}
+
+# The systemd unit: Dremio runs directly, or with --java-image inside a Docker container of that image
+# (host network, the Dremio directory and the storage mounted at the same paths, the uid of the host user).
+write_service_unit() {
+    local input_mount=""
+    [[ -n $INPUT_DIR ]] && input_mount="-v $INPUT_DIR:$INPUT_DIR:ro"
+    if [[ -n $JAVA_IMAGE ]]; then
+        cx bash -c "cat > /etc/systemd/system/dremio.service" <<EOF
+[Unit]
+Description=Dremio
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+ExecStartPre=-/usr/bin/docker rm -f dremio
+ExecStart=/usr/bin/docker run --rm --name dremio --network host --user $HOST_UID:$HOST_GID --ulimit nofile=65536:65536 -e HOME=/tmp -v /opt/dremio:/opt/dremio -v $STORAGE_PATH:$STORAGE_PATH $input_mount --entrypoint bash $JAVA_IMAGE -c 'exec /opt/dremio/bin/dremio start-fg'
+ExecStop=/usr/bin/docker stop dremio
+Restart=on-failure
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    else
+        cx bash -c "cat > /etc/systemd/system/dremio.service" <<EOF
 [Unit]
 Description=Dremio
 After=network-online.target
@@ -112,6 +170,5 @@ TimeoutStopSec=120
 [Install]
 WantedBy=multi-user.target
 EOF
-    cx systemctl daemon-reload
-    cx systemctl enable --now dremio
+    fi
 }

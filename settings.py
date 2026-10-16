@@ -14,7 +14,7 @@
                    "ALTER SYSTEM SET planner.width.max_per_node = 28; ALTER SYSTEM SET planner.width.max_per_query = 1000".
                    Use ALTER SYSTEM: every job is its own session, so ALTER SESSION would not reach the test body.
   REPORT_CSV       CSV the run is appended to (default data/test_results.csv); the traceback log of a failed run goes next to it
-  HEAP_MB / DIRECT_MB / JVM_VERSION / CONTAINER_RAM_MB / CONTAINER_CPUS
+  HEAP_MB / DIRECT_MB / JVM_VERSION / JAVA_IMAGE / CONTAINER_RAM_MB / CONTAINER_CPUS
                    what the Dremio under test was configured with (set by deploy_dremio.sh and
                    scripts/test_container.sh); they go to the report as they are
 """

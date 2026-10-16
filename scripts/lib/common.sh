@@ -10,6 +10,23 @@ detect_container_cli() {
     else die "neither incus nor lxc found in PATH"; fi
 }
 
+# The Java of a deployment as a name part: the tag of --java-image (lower case, other characters
+# to hyphens), e.g. cgr.dev/chainguard/jdk:openjdk-21-dev -> openjdk-21-dev; else the Java version.
+java_label() {
+    if [[ -n ${JAVA_IMAGE:-} ]]; then
+        local tag=${JAVA_IMAGE##*/}
+        tag=${tag#*:}
+        tr 'A-Z' 'a-z' <<<"$tag" | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g'
+    else
+        echo "${JAVA_VERSION:-}"
+    fi
+}
+
+# Container settings that let Docker run inside it.
+docker_launch_args() {
+    echo "-c security.nesting=true -c security.syscalls.intercept.mknod=true -c security.syscalls.intercept.setxattr=true"
+}
+
 # Default container name: d<dremio version>-j<java>-<memory>-<cpus>cpu, e.g. d26-1-8-j21-16G-4cpu. The version comes
 # from the package file name; dots become hyphens because instance names allow only alphanumerics
 # and hyphens. <memory> is the container memory limit (14G, or 1500M when not a whole number of GB);

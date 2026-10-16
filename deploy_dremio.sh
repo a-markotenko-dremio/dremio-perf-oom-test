@@ -21,6 +21,9 @@ Required:
 
 Options:
   --java-version N           OpenJDK major version installed in the container (default: 17)
+  --java-image IMAGE         run Dremio with the Java of this Docker image instead (Docker is installed in the
+                             container; the image needs bash and java, use a -dev image), e.g.
+                             cgr.dev/chainguard/jdk:latest-dev; excludes --java-version
   --heap-memory-mb N         DREMIO_MAX_HEAP_MEMORY_SIZE_MB, an even number (default: 4096)
   --direct-memory-mb N       DREMIO_MAX_DIRECT_MEMORY_SIZE_MB (default: 8192)
   --container-memory-mb N    memory limit of the whole container (default: heap + direct + 2048)
@@ -36,6 +39,8 @@ Options:
   --java-opts "OPTS"         extra JVM options for the Dremio server (DREMIO_JAVA_SERVER_EXTRA_OPTS in
                              dremio-env), e.g. "-XX:InitiatingHeapOccupancyPercent=90 -XX:+UseParallelGC"
   --gc-log                   write the GC log to /opt/dremio/log/gc.log in the container (-Xlog:gc*, Java 9+)
+  --docker-config FILE       Docker config.json with registry credentials, copied into the container
+                             (for images that need a login; with --java-image)
   --recreate                 delete the container first if it already exists
   --accept-eula              accept the Dremio EULA via POST /apiv2/eula/accept (you confirm
                              that you have read and agree to the license terms)
@@ -53,7 +58,7 @@ EOF
 }
 
 PACKAGE="" STORAGE_PATH="" INPUT="" IMAGE=""
-JAVA_VERSION=17 HEAP_MB=4096 DIRECT_MB=8192 CONTAINER_MB="" CPUS="" NAME=""
+JAVA_VERSION="" JAVA_IMAGE="" DOCKER_CONFIG_FILE="" HEAP_MB=4096 DIRECT_MB=8192 CONTAINER_MB="" CPUS="" NAME=""
 JAVA_OPTS="" GC_LOG=0
 RECREATE=0 DRY_RUN=0 ACCEPT_EULA=0 REBUILD_IMAGE=0 ROWS="" ALLOW_SHARED=0
 
@@ -64,6 +69,8 @@ parse_args() {
             --package) PACKAGE=$2; shift 2 ;;
             --storage-path) STORAGE_PATH=$2; shift 2 ;;
             --java-version) JAVA_VERSION=$2; shift 2 ;;
+            --java-image) JAVA_IMAGE=$2; shift 2 ;;
+            --docker-config) DOCKER_CONFIG_FILE=$2; shift 2 ;;
             --heap-memory-mb) HEAP_MB=$2; shift 2 ;;
             --direct-memory-mb) DIRECT_MB=$2; shift 2 ;;
             --container-memory-mb) CONTAINER_MB=$2; shift 2 ;;
@@ -101,7 +108,16 @@ validate_settings() {
         (( ROWS >= 1 && ROWS <= 2147483647 )) || die "--rows must be in 1..2147483647 rows, got $ROWS"
     fi
     (( GC_LOG )) && JAVA_OPTS="${JAVA_OPTS:+$JAVA_OPTS }-Xlog:gc*:file=/opt/dremio/log/gc.log:time,uptime:filecount=5,filesize=50m"
-    for v in JAVA_VERSION HEAP_MB DIRECT_MB; do
+    if [[ -n $JAVA_IMAGE ]]; then
+        [[ -z $JAVA_VERSION ]] || die "--java-image and --java-version exclude each other"
+        [[ $JAVA_IMAGE =~ ^[A-Za-z0-9._/:@-]+$ ]] || die "--java-image is not a Docker image reference: $JAVA_IMAGE"
+        [[ -z $DOCKER_CONFIG_FILE || -f $DOCKER_CONFIG_FILE ]] || die "docker config not found: $DOCKER_CONFIG_FILE"
+    else
+        [[ -z $DOCKER_CONFIG_FILE ]] || die "--docker-config needs --java-image"
+        JAVA_VERSION=${JAVA_VERSION:-17}
+        [[ $JAVA_VERSION =~ ^[0-9]+$ ]] || die "JAVA_VERSION must be a positive integer"
+    fi
+    for v in HEAP_MB DIRECT_MB; do
         [[ ${!v} =~ ^[0-9]+$ ]] || die "$v must be a positive integer"
     done
     # The JVM rounds the maximum heap up to a multiple of 2 MB (-Xmx445m runs with 446 MB), so an odd value
@@ -111,7 +127,7 @@ validate_settings() {
     [[ $CONTAINER_MB =~ ^[0-9]+$ ]] || die "--container-memory-mb must be an integer"
     (( HEAP_MB + DIRECT_MB < CONTAINER_MB )) \
         || die "heap ($HEAP_MB) + direct ($DIRECT_MB) MB must be less than container memory ($CONTAINER_MB MB)"
-    [[ -n $NAME ]] || NAME=$(default_container_name "$PACKAGE" "$JAVA_VERSION" "$CONTAINER_MB" "$CPUS")
+    [[ -n $NAME ]] || NAME=$(default_container_name "$PACKAGE" "$(java_label)" "$CONTAINER_MB" "$CPUS")
 }
 
 # --input: local directory -> mounted into the container; URL -> checked over TCP.
@@ -136,7 +152,10 @@ parse_args "$@"
 validate_settings
 detect_container_cli
 USE_CACHED_IMAGE=0
-if [[ -z $IMAGE ]]; then USE_CACHED_IMAGE=1; IMAGE=perf-java${JAVA_VERSION}; fi
+if [[ -z $IMAGE ]]; then
+    USE_CACHED_IMAGE=1
+    if [[ -n $JAVA_IMAGE ]]; then IMAGE=perf-docker; else IMAGE=perf-java${JAVA_VERSION}; fi
+fi
 $CT list >/dev/null 2>&1 || die "'$CT list' failed: no access to the daemon (add your user to the incus-admin/lxd group)"
 
 mkdir -p "$STORAGE_PATH"

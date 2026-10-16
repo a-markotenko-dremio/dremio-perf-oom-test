@@ -27,7 +27,16 @@ STORAGE_PATH=${STORAGE_PATH:-$($CT config device get "$CONTAINER" storage source
 ARGS=$(cx sh -c "ps -eo args | grep '[D]remioDaemon'" || true)
 HEAP_MB=$(sed -n 's/.*-Xmx\([0-9]*\)m.*/\1/p' <<<"$ARGS")
 DIRECT_MB=$(sed -n 's/.*-XX:MaxDirectMemorySize=\([0-9]*\)m.*/\1/p' <<<"$ARGS")
-JVM_VERSION=$(cx "$(awk '{print $1}' <<<"$ARGS")" -version 2>&1 | sed -n 's/.*Runtime Environment.*(build \(.*\))/\1/p' || true)
+# The java of the process: in the container, or (Dremio runs in Docker) inside the image of its container.
+JAVA_BIN=$(awk '{print $1}' <<<"$ARGS")
+if cx test -x "$JAVA_BIN" 2>/dev/null; then
+    JAVA_IMAGE=""
+    JAVA_OUT=$(cx "$JAVA_BIN" -version 2>&1 || true)
+else
+    JAVA_IMAGE=$(cx docker inspect --format '{{.Config.Image}}' dremio 2>/dev/null || true)
+    JAVA_OUT=$(cx docker run --rm --entrypoint "$JAVA_BIN" "$JAVA_IMAGE" -version 2>&1 || true)
+fi
+JVM_VERSION=$(sed -n 's/.*Runtime Environment.*(build \(.*\))/\1/p' <<<"$JAVA_OUT")
 
 # The container limits ("max" or unreadable: unknown).
 LIMIT=$(cx cat /sys/fs/cgroup/memory.max 2>/dev/null || true)
@@ -38,5 +47,5 @@ CONTAINER_CPUS=$(cx nproc 2>/dev/null || true)
 ROWS_LABEL=$("$PYTHON" -c 'import sys, results_report as r; print(r.format_rows(r.parse_rows(sys.argv[1])))' "$ROW_COUNT")
 echo "==> $CONTAINER: http://$IP:9047 (storage $STORAGE_PATH, container ${CONTAINER_RAM_MB:-?} MB, cpus ${CONTAINER_CPUS:-?}, heap ${HEAP_MB:-?} MB, direct ${DIRECT_MB:-?} MB, rows $ROWS_LABEL)"
 
-export DREMIO_URL=http://$IP:9047 STORAGE_PATH ROW_COUNT HEAP_MB DIRECT_MB JVM_VERSION CONTAINER_RAM_MB CONTAINER_CPUS
+export DREMIO_URL=http://$IP:9047 STORAGE_PATH ROW_COUNT HEAP_MB DIRECT_MB JVM_VERSION JAVA_IMAGE CONTAINER_RAM_MB CONTAINER_CPUS
 exec "$PYTHON" -m pytest -v -rs tests

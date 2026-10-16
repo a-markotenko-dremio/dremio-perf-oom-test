@@ -44,9 +44,11 @@ verify_configuration() {
             grep -qF -- "$opt" <<<"$args" || die "java is not running with $opt"
         done
     fi
-    java_out=$(cx "$JAVA_HOME_DIR/bin/java" -version 2>&1) || die "cannot run $JAVA_HOME_DIR/bin/java"
-    grep -qE "version \"($JAVA_VERSION|1\.$JAVA_VERSION)[.\"]" <<<"$java_out" \
-        || die "java $JAVA_VERSION is not the active JVM"
+    java_out=$(run_java -version 2>&1) || die "cannot run $JAVA_HOME_DIR/bin/java"
+    if [[ -z $JAVA_IMAGE ]]; then
+        grep -qE "version \"($JAVA_VERSION|1\.$JAVA_VERSION)[.\"]" <<<"$java_out" \
+            || die "java $JAVA_VERSION is not the active JVM"
+    fi
     [[ $(cx cat /sys/fs/cgroup/memory.max) == $((CONTAINER_MB * 1024 * 1024)) ]] \
         || die "container memory limit is not ${CONTAINER_MB}MiB"
     cx runuser -u dremio -- test -w "$STORAGE_PATH" || die "dremio user cannot write to $STORAGE_PATH"
@@ -58,7 +60,7 @@ run_tests() {
     cd "$(dirname "$(readlink -f "$0")")"
     make venv
     export DREMIO_URL DREMIO_USER DREMIO_PASSWORD STORAGE_PATH
-    export HEAP_MB DIRECT_MB
+    export HEAP_MB DIRECT_MB JAVA_IMAGE
     export CONTAINER_RAM_MB=$CONTAINER_MB
     export CONTAINER_CPUS=$(cx nproc)
     JVM_VERSION=$(sed -n 's/.*Runtime Environment.*(build \(.*\))/\1/p' <<<"$java_out"); export JVM_VERSION
