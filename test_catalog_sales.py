@@ -244,7 +244,7 @@ def write_report(run_sql, auth_headers, minutes, verdict, started_at):
 
 def write_traceback(started_at):
     """Saves the traceback of the exception being handled to test_result_<timestamp>.log next to the CSV."""
-    path = REPORT_CSV.parent / f"test_result_{results_report.file_timestamp(started_at)}.log"
+    path = REPORT_CSV.parent / f"test_result_{results_report.timestamp(started_at)}.log"
     path.write_text(traceback.format_exc())
     print(f"traceback saved to {path}", flush=True)
 

@@ -16,12 +16,8 @@ COLUMNS = ["Timestamp", "Host src", "Data src", "Host dst", "Data dst", "Dremio 
 
 
 def timestamp(t=None):
-    """'2026-10-16 10:15:30' for the CSV column; file_timestamp() is the same moment for file names."""
-    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
-
-
-def file_timestamp(t=None):
-    return time.strftime("%Y%m%d_%H%M%S", time.localtime(t))
+    """'2026-10-16_03-18-11': the CSV column and the test_result_<timestamp>.log name use this same value."""
+    return time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(t))
 
 
 def host_name():
