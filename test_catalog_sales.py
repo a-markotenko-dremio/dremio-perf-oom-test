@@ -12,12 +12,15 @@ Configuration via environment variables:
   DREMIO_TOKEN     personal access token (Bearer), or
   DREMIO_USER / DREMIO_PASSWORD  for login via /apiv2/login (default dremio/dremio123)
   DREMIO_TIMEOUT   seconds allowed for each job to finish (default 3600)
-  ROW_COUNT        number of rows to generate (default 100000, max 2147483647)
+  ROW_COUNT        number of rows to generate, e.g. 10000000, 10M or 1.44G (default 100000, max 2147483647)
+  BLOCKS_DIR       optional directory of generated blocks shared by several STORAGE_PATHs
+                   (<STORAGE_PATH>/blocks becomes a symlink to it; same filesystem recommended)
   STORAGE_PATH     directory where both tables are stored (default /mnt/ubuntu-var/dremio).
                    Two NAS sources are created in Dremio: <STORAGE_PATH>/input and
                    <STORAGE_PATH>/output. The directory must be writable by the Dremio user.
 """
 import os
+import shutil
 import time
 import urllib.parse
 from pathlib import Path
@@ -26,10 +29,12 @@ import pytest
 import requests
 
 import generate_data
+import results_report
 
 DREMIO_URL = os.environ.get("DREMIO_URL", "http://localhost:9047").rstrip("/")
 TIMEOUT = int(os.environ.get("DREMIO_TIMEOUT", "3600"))
-ROW_COUNT = int(os.environ.get("ROW_COUNT", "100000"))
+ROW_COUNT = results_report.parse_rows(os.environ.get("ROW_COUNT", "100000"))
+REPORT_CSV = Path(os.environ.get("REPORT_CSV", Path(__file__).parent / "test_results.csv"))
 MAX_ROW_COUNT = 2**31 - 1  # ids are generated as INT in generate_data.py
 
 STORAGE_PATH = Path(os.environ.get("STORAGE_PATH", "/mnt/ubuntu-var/dremio"))
@@ -39,6 +44,7 @@ OUTPUT_SOURCE = "perf_output"
 SQL_DIR = Path(__file__).parent
 INPUT_TABLE = f'"{INPUT_SOURCE}".STACKIT_S3."tpcds-1tb-flat".catalog_sales'
 OUTPUT_TABLE = f'"{OUTPUT_SOURCE}"."tpcds-1tb".catalog_sales'
+OUTPUT_TABLE_DIR = STORAGE_PATH / "output" / "tpcds-1tb" / "catalog_sales"
 SQL_PARAMS = {"INPUT_SOURCE": INPUT_SOURCE, "OUTPUT_SOURCE": OUTPUT_SOURCE}
 
 
@@ -158,7 +164,8 @@ def unpromote_input_table(auth_headers):
     existing = requests.get(by_path, headers=auth_headers, timeout=30)
     if existing.ok and existing.json().get("entityType") == "dataset":
         d = existing.json()
-        requests.delete(f"{base}/{d['id']}?tag={d['tag']}", headers=auth_headers,
+        # params= URL-encodes the tag: it may contain '+', which a raw query string turns into a space.
+        requests.delete(f"{base}/{d['id']}", params={"tag": d["tag"]}, headers=auth_headers,
                         timeout=60).raise_for_status()
 
 
@@ -185,14 +192,68 @@ def prepared_data(auth_headers, storage):
     promote_folder(auth_headers)
 
 
-def test_output_row_count_matches_input(prepared_data, run_sql, count_rows):
+def clean_output_table(run_sql):
+    """Removes the output table of a previous run, also when this Dremio does not know it.
+
+    STORAGE_PATH outlives the container, so a fresh Dremio has no metadata for the table left on
+    disk; DROP TABLE IF EXISTS is then a no-op and CREATE TABLE fails with "Folder already exists".
+    """
+    run_sql(f"DROP TABLE IF EXISTS {OUTPUT_TABLE}")
+    if OUTPUT_TABLE_DIR.exists():
+        print(f"removing leftover output table folder {OUTPUT_TABLE_DIR}", flush=True)
+        shutil.rmtree(OUTPUT_TABLE_DIR)
+
+
+def query_rows(run_sql, auth_headers, sql):
+    job = run_sql(sql)
+    res = requests.get(f"{DREMIO_URL}/api/v3/job/{job['id']}/results",
+                       headers=auth_headers, timeout=60)
+    res.raise_for_status()
+    return res.json()["rows"]
+
+
+def write_report(run_sql, auth_headers, minutes, verdict):
+    """Adds this run to REPORT_CSV; what Dremio reports about itself is queried from Dremio."""
+    version = query_rows(run_sql, auth_headers, "SELECT version FROM sys.nodes")[0]["version"]
+    mem = query_rows(run_sql, auth_headers, "SELECT heap_max, direct_max FROM sys.memory")[0]
+    host = results_report.host_name()
+    results_report.append_row(REPORT_CSV, {
+        "Host src": host, "Data src": "dir/Parquet",
+        "Host dst": host, "Data dst": "dir/Iceberg",
+        "Dremio ver": version,
+        "JVM ver": os.environ.get("JVM_VERSION", ""),
+        "Host RAM": results_report.host_ram(),
+        "CPUs": results_report.cpus(),
+        "DREMIO_MAX_DIRECT_MEMORY_SIZE_MB": mem["direct_max"] // (1024 * 1024),
+        "DREMIO_MAX_HEAP_MEMORY_SIZE_MB": mem["heap_max"] // (1024 * 1024),
+        "Rows": results_report.format_rows(ROW_COUNT),
+        "Duration (minutes)": f"{minutes:.1f}",
+        "Verdict": verdict,
+        "Run by": results_report.run_by(),
+    })
+    print(f"report row added to {REPORT_CSV}", flush=True)
+
+
+def test_output_row_count_matches_input(prepared_data, run_sql, count_rows, auth_headers):
     input_count = count_rows(INPUT_TABLE)
     assert input_count == ROW_COUNT, \
-        f"Input table has {input_count} rows, expected {ROW_COUNT}"
+        f"Input table has {input_count} rows, expected {ROW_COUNT} ({results_report.format_rows(ROW_COUNT)})"
 
-    for stmt in load_statements("run_test_body.sql", **SQL_PARAMS):
-        run_sql(stmt)
+    clean_output_table(run_sql)
+    verdict = "FAIL"
+    started = time.monotonic()
+    elapsed = None
+    try:
+        for stmt in load_statements("run_test_body.sql", **SQL_PARAMS):
+            run_sql(stmt)
+        elapsed = time.monotonic() - started
 
-    output_count = count_rows(OUTPUT_TABLE)
-    assert output_count == input_count, \
-        f"Output table has {output_count} rows, input has {input_count}"
+        output_count = count_rows(OUTPUT_TABLE)
+        assert output_count == input_count, \
+            f"Output table has {output_count} rows, input has {input_count}"
+        verdict = "PASS"
+    finally:
+        # Duration of the SQL statements (DROP + CREATE TABLE ... AS SELECT); also recorded on failure.
+        if elapsed is None:
+            elapsed = time.monotonic() - started
+        write_report(run_sql, auth_headers, elapsed / 60, verdict)
