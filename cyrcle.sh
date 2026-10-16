@@ -18,6 +18,10 @@ CPUS=${CPUS:-4}                          # same CPU count on every server, so th
 # PAIRS="heap direct;heap direct;..." and ROWS="10M 50M ..." (ascending) override the 4G defaults
 IFS=';' read -r -a HEAP_DIRECT <<< "${PAIRS:-2048 1024;1536 1024;1024 1024;1024 512;768 512}"
 read -r -a ROWS <<< "${ROWS:-10M 50M 100M 200M 500M}"
+for cfg in "${HEAP_DIRECT[@]}"; do
+  set -- $cfg
+  (( $1 % 2 == 0 )) || { echo "heap $1 in PAIRS must be even: the JVM rounds odd values up to the next even MB" >&2; exit 2; }
+done
 CSV=${REPORT_CSV:-test_results.csv}
 # Generated data blocks shared by all storage paths (<storage>/blocks -> this directory)
 export BLOCKS_DIR=${BLOCKS_DIR:-/mnt/ubuntu-var/dremio/blocks}

@@ -18,7 +18,7 @@ Required:
 
 Options:
   --java-version N           OpenJDK major version installed in the container (default: 17)
-  --heap-memory-mb N         DREMIO_MAX_HEAP_MEMORY_SIZE_MB   (default: 4096)
+  --heap-memory-mb N         DREMIO_MAX_HEAP_MEMORY_SIZE_MB, an even number (default: 4096)
   --direct-memory-mb N       DREMIO_MAX_DIRECT_MEMORY_SIZE_MB (default: 8192)
   --container-memory-mb N    memory limit of the whole container (default: heap + direct + 2048)
   --input PATH|URL           input data: a local directory (mounted read-only at the same
@@ -99,6 +99,9 @@ fi
 for v in JAVA_VERSION HEAP_MB DIRECT_MB; do
     [[ ${!v} =~ ^[0-9]+$ ]] || die "$v must be a positive integer"
 done
+# The JVM rounds the maximum heap up to a multiple of 2 MB (-Xmx445m runs with 446 MB), so an odd value
+# would silently be the same configuration as the next even one.
+(( HEAP_MB % 2 == 0 )) || die "--heap-memory-mb must be even (got $HEAP_MB): the JVM rounds odd values up to the next even MB"
 CONTAINER_MB=${CONTAINER_MB:-$((HEAP_MB + DIRECT_MB + 2048))}
 [[ $CONTAINER_MB =~ ^[0-9]+$ ]] || die "--container-memory-mb must be an integer"
 (( HEAP_MB + DIRECT_MB < CONTAINER_MB )) \
