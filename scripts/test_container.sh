@@ -17,7 +17,7 @@ ROW_COUNT=${ROW_COUNT:-100000}
 detect_container_cli
 cx() { $CT exec "$CONTAINER" -- "$@"; }
 
-IP=$(cx hostname -I | awk '{print $1}' || true)
+IP=$(container_ip || true)
 [[ -n $IP ]] || die "cannot get the IP of container $CONTAINER (is it running?)"
 
 STORAGE_PATH=${STORAGE_PATH:-$($CT config device get "$CONTAINER" storage source || true)}
@@ -34,7 +34,7 @@ if cx test -x "$JAVA_BIN" 2>/dev/null; then
     JAVA_OUT=$(cx "$JAVA_BIN" -version 2>&1 || true)
 else
     JAVA_IMAGE=$(cx docker inspect --format '{{.Config.Image}}' dremio 2>/dev/null || true)
-    JAVA_OUT=$(cx docker run --rm --entrypoint "$JAVA_BIN" "$JAVA_IMAGE" -version 2>&1 || true)
+    JAVA_OUT=$(cx docker run --rm --security-opt apparmor=unconfined --entrypoint "$JAVA_BIN" "$JAVA_IMAGE" -version 2>&1 || true)
 fi
 JVM_VERSION=$(sed -n 's/.*Runtime Environment.*(build \(.*\))/\1/p' <<<"$JAVA_OUT")
 

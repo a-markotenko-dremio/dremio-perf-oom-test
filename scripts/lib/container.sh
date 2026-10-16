@@ -4,7 +4,7 @@ cx() { $CT exec "$NAME" -- "$@"; }  # run a command in the container
 
 # Runs the java Dremio runs with: from the Java image with --java-image, else the one in the container.
 run_java() {
-    if [[ -n $JAVA_IMAGE ]]; then cx docker run --rm --entrypoint "$JAVA_HOME_DIR/bin/java" "$JAVA_IMAGE" "$@"
+    if [[ -n $JAVA_IMAGE ]]; then cx docker run --rm --security-opt apparmor=unconfined --entrypoint "$JAVA_HOME_DIR/bin/java" "$JAVA_IMAGE" "$@"
     else cx "$JAVA_HOME_DIR/bin/java" "$@"; fi
 }
 
@@ -73,9 +73,10 @@ install_java_image() {
     log "Pulling $JAVA_IMAGE"
     cx docker pull "$JAVA_IMAGE" >/dev/null \
         || die "cannot pull $JAVA_IMAGE (a tag that needs a login? pass --docker-config ~/.docker/config.json)"
-    cx docker run --rm --entrypoint bash "$JAVA_IMAGE" -c "command -v java" >/dev/null \
-        || die "$JAVA_IMAGE has no bash or java: Dremio's bin/dremio needs both (use a -dev image)"
-    JAVA_HOME_DIR=$(cx docker run --rm --entrypoint bash "$JAVA_IMAGE" -c 'dirname $(dirname $(readlink -f $(command -v java)))')
+    local probe
+    probe=$(cx docker run --rm --security-opt apparmor=unconfined --entrypoint bash "$JAVA_IMAGE" -c "command -v java" 2>&1) \
+        || die "cannot run $JAVA_IMAGE with bash and java (Dremio's bin/dremio needs both, use a -dev image): $probe"
+    JAVA_HOME_DIR=$(cx docker run --rm --security-opt apparmor=unconfined --entrypoint bash "$JAVA_IMAGE" -c 'dirname $(dirname $(readlink -f $(command -v java)))')
 }
 
 # Installs OpenJDK if the container lacks it and finds JAVA_HOME_DIR.
@@ -145,7 +146,7 @@ Requires=docker.service
 
 [Service]
 ExecStartPre=-/usr/bin/docker rm -f dremio
-ExecStart=/usr/bin/docker run --rm --name dremio --network host --user $HOST_UID:$HOST_GID --ulimit nofile=65536:65536 -e HOME=/tmp -v /opt/dremio:/opt/dremio -v $STORAGE_PATH:$STORAGE_PATH $input_mount --entrypoint bash $JAVA_IMAGE -c 'exec /opt/dremio/bin/dremio start-fg'
+ExecStart=/usr/bin/docker run --rm --security-opt apparmor=unconfined --name dremio --network host --user $HOST_UID:$HOST_GID --ulimit nofile=65536:65536 -e HOME=/tmp -v /etc/passwd:/etc/passwd:ro -v /etc/group:/etc/group:ro -v /opt/dremio:/opt/dremio -v $STORAGE_PATH:$STORAGE_PATH $input_mount --entrypoint bash $JAVA_IMAGE -c 'exec /opt/dremio/bin/dremio start-fg'
 ExecStop=/usr/bin/docker stop dremio
 Restart=on-failure
 TimeoutStopSec=120

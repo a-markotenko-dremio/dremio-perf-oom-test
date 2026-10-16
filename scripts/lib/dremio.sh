@@ -2,7 +2,7 @@
 
 # Sets IP and DREMIO_URL and waits until Dremio answers (accepting the EULA with --accept-eula).
 wait_for_dremio() {
-    IP=$(cx hostname -I | awk '{print $1}')
+    IP=$(container_ip)
     [[ -n $IP ]] || die "cannot determine container IP"
     DREMIO_URL="http://$IP:9047"
     log "Waiting for Dremio at $DREMIO_URL"

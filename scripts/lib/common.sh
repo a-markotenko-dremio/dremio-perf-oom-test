@@ -22,9 +22,20 @@ java_label() {
     fi
 }
 
-# Container settings that let Docker run inside it.
+# IP of the container on its own network: the source address of the default route. Not the first of
+# `hostname -I`: with Docker in the container that is often the docker0 address (172.17.0.1).
+# usage: container_ip   (uses cx)
+container_ip() {
+    local ip
+    ip=$(cx ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") {print $(i+1); exit}}')
+    [[ -n $ip ]] || ip=$(cx hostname -I | awk '{print $1}')
+    echo "$ip"
+}
+
+# Container settings that let Docker run inside it. raw.lxc turns off the AppArmor profile of the container:
+# otherwise runc fails with "open sysctl net.ipv4.ip_unprivileged_port_start ... permission denied".
 docker_launch_args() {
-    echo "-c security.nesting=true -c security.syscalls.intercept.mknod=true -c security.syscalls.intercept.setxattr=true"
+    echo "-c security.nesting=true -c security.syscalls.intercept.mknod=true -c security.syscalls.intercept.setxattr=true -c raw.lxc=lxc.apparmor.profile=unconfined"
 }
 
 # Default container name: d<dremio version>-j<java>-<memory>-<cpus>cpu, e.g. d26-1-8-j21-16G-4cpu. The version comes
