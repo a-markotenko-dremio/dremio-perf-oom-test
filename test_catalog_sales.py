@@ -25,6 +25,7 @@ Configuration via environment variables:
 import os
 import shutil
 import time
+import traceback
 import urllib.parse
 from pathlib import Path
 
@@ -218,12 +219,13 @@ def query_rows(run_sql, auth_headers, sql):
     return res.json()["rows"]
 
 
-def write_report(run_sql, auth_headers, minutes, verdict):
+def write_report(run_sql, auth_headers, minutes, verdict, started_at):
     """Adds this run to REPORT_CSV; what Dremio reports about itself is queried from Dremio."""
     version = query_rows(run_sql, auth_headers, "SELECT version FROM sys.nodes")[0]["version"]
     mem = query_rows(run_sql, auth_headers, "SELECT heap_max, direct_max FROM sys.memory")[0]
     host = results_report.host_name()
     results_report.append_row(REPORT_CSV, {
+        "Timestamp": results_report.timestamp(started_at),
         "Host src": host, "Data src": "dir/Parquet",
         "Host dst": host, "Data dst": "dir/Iceberg",
         "Dremio ver": version,
@@ -240,6 +242,13 @@ def write_report(run_sql, auth_headers, minutes, verdict):
     print(f"report row added to {REPORT_CSV}", flush=True)
 
 
+def write_traceback(started_at):
+    """Saves the traceback of the exception being handled to test_result_<timestamp>.log next to the CSV."""
+    path = REPORT_CSV.parent / f"test_result_{results_report.file_timestamp(started_at)}.log"
+    path.write_text(traceback.format_exc())
+    print(f"traceback saved to {path}", flush=True)
+
+
 def test_output_row_count_matches_input(prepared_data, run_sql, count_rows, auth_headers):
     input_count = count_rows(INPUT_TABLE)
     assert input_count == ROW_COUNT, \
@@ -247,6 +256,7 @@ def test_output_row_count_matches_input(prepared_data, run_sql, count_rows, auth
 
     clean_output_table(run_sql)
     verdict = "FAIL"
+    started_at = time.time()
     started = time.monotonic()
     elapsed = None
     try:
@@ -261,8 +271,11 @@ def test_output_row_count_matches_input(prepared_data, run_sql, count_rows, auth
         assert output_count == input_count, \
             f"Output table has {output_count} rows, input has {input_count}"
         verdict = "PASS"
+    except BaseException:
+        write_traceback(started_at)
+        raise
     finally:
         # Duration of the SQL statements (DROP + CREATE TABLE ... AS SELECT); also recorded on failure.
         if elapsed is None:
             elapsed = time.monotonic() - started
-        write_report(run_sql, auth_headers, elapsed / 60, verdict)
+        write_report(run_sql, auth_headers, elapsed / 60, verdict, started_at)

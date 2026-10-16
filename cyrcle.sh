@@ -3,7 +3,6 @@
 # count, run the test on growing row counts until it fails, then delete the container.
 # Combinations already present in test_results.csv (same Dremio version, memory, CPUs, heap, direct,
 # rows) are skipped; a FAIL recorded there ends the row sweep for that pair, like a fresh failure.
-# Rows recorded before the CPUs column existed (empty CPUs) count as matching.
 #
 #   ./cyrcle.sh                 run
 #   JAVA_OPTS="-XX:..." GC_LOG=1 PRE_SQL="ALTER SYSTEM SET ..."  extra JVM options / GC log / SQL run before the test
@@ -41,7 +40,7 @@ with open(path, newline="") as f:
     for r in csv.DictReader(f):
         if (r["Dremio ver"], r["Host RAM"], r["DREMIO_MAX_DIRECT_MEMORY_SIZE_MB"],
             r["DREMIO_MAX_HEAP_MEMORY_SIZE_MB"], r["Rows"]) == (ver, ram, direct, heap, rows) \
-           and r.get("CPUs", "") in ("", cpus):
+           and r.get("CPUs", "") == cpus:
             print(r["Verdict"])
             break
 EOF

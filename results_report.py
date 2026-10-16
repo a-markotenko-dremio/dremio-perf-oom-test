@@ -6,12 +6,22 @@ import os
 import platform
 import re
 import socket
+import time
 from decimal import Decimal
 from pathlib import Path
 
-COLUMNS = ["Host src", "Data src", "Host dst", "Data dst", "Dremio ver", "JVM ver", "Host RAM", "CPUs",
+COLUMNS = ["Timestamp", "Host src", "Data src", "Host dst", "Data dst", "Dremio ver", "JVM ver", "Host RAM", "CPUs",
            "DREMIO_MAX_DIRECT_MEMORY_SIZE_MB", "DREMIO_MAX_HEAP_MEMORY_SIZE_MB", "Rows",
            "Duration (minutes)", "Verdict", "Run by"]
+
+
+def timestamp(t=None):
+    """'2026-10-16 10:15:30' for the CSV column; file_timestamp() is the same moment for file names."""
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
+
+
+def file_timestamp(t=None):
+    return time.strftime("%Y%m%d_%H%M%S", time.localtime(t))
 
 
 def host_name():
@@ -60,27 +70,10 @@ def run_by():
     return os.environ.get("RUN_BY") or getpass.getuser()
 
 
-def _migrate(path):
-    """Rewrites a CSV written with an older column set to the current COLUMNS (new ones empty)."""
-    with path.open(newline="") as f:
-        reader = csv.DictReader(f)
-        if reader.fieldnames == COLUMNS:
-            return
-        old_rows = list(reader)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=COLUMNS, extrasaction="ignore", restval="")
-        w.writeheader()
-        w.writerows(old_rows)
-    tmp.replace(path)
-
-
 def append_row(path, row):
     """Appends `row` (a dict keyed by COLUMNS), writing the header when the file is new."""
     path = Path(path)
     new = not path.exists() or path.stat().st_size == 0
-    if not new:
-        _migrate(path)
     with path.open("a", newline="") as f:
         w = csv.DictWriter(f, fieldnames=COLUMNS)
         if new:
