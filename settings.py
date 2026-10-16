@@ -1,0 +1,56 @@
+"""Test settings, all read from environment variables once, at import.
+
+  DREMIO_URL       (default http://localhost:9047)
+  DREMIO_TOKEN     personal access token (Bearer), or
+  DREMIO_USER / DREMIO_PASSWORD  for login via /apiv2/login (default dremio/dremio123)
+  DREMIO_TIMEOUT   seconds allowed for each job to finish (default 3600)
+  ROW_COUNT        number of rows to generate, e.g. 10000000, 10M or 1.44G (default 100000, max 2147483647)
+  BLOCKS_DIR       optional directory of generated blocks shared by several STORAGE_PATHs
+                   (<STORAGE_PATH>/blocks becomes a symlink to it; same filesystem recommended)
+  STORAGE_PATH     directory where both tables are stored (default /mnt/ubuntu-var/dremio).
+                   Two NAS sources are created in Dremio: <STORAGE_PATH>/input and
+                   <STORAGE_PATH>/output. The directory must be writable by the Dremio user.
+  PRE_SQL          optional ';'-separated statements run before the test body, e.g. to raise the parallelism:
+                   "ALTER SYSTEM SET planner.width.max_per_node = 28; ALTER SYSTEM SET planner.width.max_per_query = 1000".
+                   Use ALTER SYSTEM: every job is its own session, so ALTER SESSION would not reach the test body.
+  REPORT_CSV       CSV the run is appended to (default test_results.csv next to the tests)
+  HEAP_MB / DIRECT_MB / JVM_VERSION / CONTAINER_RAM_MB / CONTAINER_CPUS
+                   what the Dremio under test was configured with (set by deploy_dremio.sh and
+                   scripts/test_container.sh); they go to the report as they are
+"""
+import os
+from pathlib import Path
+
+import results_report
+
+DREMIO_URL = os.environ.get("DREMIO_URL", "http://localhost:9047").rstrip("/")
+TIMEOUT = int(os.environ.get("DREMIO_TIMEOUT", "3600"))
+ROW_COUNT = results_report.parse_rows(os.environ.get("ROW_COUNT", "100000"))
+MAX_ROW_COUNT = 2**31 - 1  # ids are generated as INT in generate_data.py
+REPORT_CSV = Path(os.environ.get("REPORT_CSV", Path(__file__).parent / "test_results.csv"))
+
+STORAGE_PATH = Path(os.environ.get("STORAGE_PATH", "/mnt/ubuntu-var/dremio"))
+INPUT_SOURCE = "perf_input"
+OUTPUT_SOURCE = "perf_output"
+
+SQL_DIR = Path(__file__).parent
+INPUT_TABLE_PATH = [INPUT_SOURCE, "STACKIT_S3", "tpcds-1tb-flat", "catalog_sales"]
+INPUT_TABLE = f'"{INPUT_SOURCE}".STACKIT_S3."tpcds-1tb-flat".catalog_sales'
+OUTPUT_TABLE = f'"{OUTPUT_SOURCE}"."tpcds-1tb".catalog_sales'
+OUTPUT_TABLE_DIR = STORAGE_PATH / "output" / "tpcds-1tb" / "catalog_sales"
+SQL_PARAMS = {"INPUT_SOURCE": INPUT_SOURCE, "OUTPUT_SOURCE": OUTPUT_SOURCE}
+
+
+def split_statements(text):
+    return [s.strip() for s in text.split(";") if s.strip()]
+
+
+def load_statements(filename, **params):
+    """Statements of an SQL file with ${NAME} placeholders replaced."""
+    text = (SQL_DIR / filename).read_text()
+    for key, value in params.items():
+        text = text.replace("${%s}" % key, str(value))
+    return split_statements(text)
+
+
+PRE_SQL = split_statements(os.environ.get("PRE_SQL", ""))
