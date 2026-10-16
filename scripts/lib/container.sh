@@ -61,6 +61,32 @@ install_java() {
     if [[ -n $JAVA_IMAGE ]]; then install_java_image; else install_java_apt; fi
 }
 
+# Builds wolfi-jdk:<N> in the Docker of the container: the public cgr.dev/chainguard/wolfi-base with bash, libstdc++
+# (RocksDB JNI) and OpenJDK N from the Wolfi packages (the versioned tags of cgr.dev/chainguard/jdk are not public).
+# It is a run + commit, not a Dockerfile: the RUN steps of `docker build` fail on the AppArmor check inside the
+# container. The built image is cached on the host ($PERF_CACHE_DIR, default ~/.cache/perf-dremio) and loaded from
+# there into the next containers; --rebuild-image builds it again.
+build_wolfi_jdk_image() {
+    local n=$1 cache=${PERF_CACHE_DIR:-$HOME/.cache/perf-dremio}/wolfi-jdk-$1.tar.gz
+    if cx docker image inspect "wolfi-jdk:$n" >/dev/null 2>&1; then log "Image wolfi-jdk:$n already built"; return; fi
+    if [[ -s $cache ]] && (( ! REBUILD_IMAGE )); then
+        log "Loading wolfi-jdk:$n from the host cache $cache"
+        if cx docker load <"$cache" >/dev/null; then return; fi
+        echo "WARNING: cannot load $cache, building the image" >&2
+    fi
+    log "Building wolfi-jdk:$n (OpenJDK $n on cgr.dev/chainguard/wolfi-base)"
+    cx docker rm -f wolfi-jdk-build >/dev/null 2>&1 || true
+    cx docker run --name wolfi-jdk-build --security-opt apparmor=unconfined --entrypoint sh cgr.dev/chainguard/wolfi-base \
+        -c "apk add --no-cache bash libstdc++ openjdk-$n >/dev/null && ln -s /usr/lib/jvm/java-$n-openjdk/bin/java /usr/bin/java" \
+        && cx docker commit wolfi-jdk-build "wolfi-jdk:$n" >/dev/null \
+        || { cx docker rm -f wolfi-jdk-build >/dev/null 2>&1 || true; die "cannot build wolfi-jdk:$n (is there a Wolfi package openjdk-$n?)"; }
+    cx docker rm wolfi-jdk-build >/dev/null
+    log "Caching wolfi-jdk:$n on the host: $cache"
+    mkdir -p "$(dirname "$cache")" \
+        && cx docker save "wolfi-jdk:$n" | gzip >"$cache.tmp" && [[ -s $cache.tmp ]] && mv "$cache.tmp" "$cache" \
+        || { rm -f "$cache.tmp"; echo "WARNING: cannot cache wolfi-jdk:$n on the host" >&2; }
+}
+
 # Pulls the Java image into the Docker of the container and finds JAVA_HOME_DIR in it.
 install_java_image() {
     log "Waiting for Docker in the container"
@@ -70,9 +96,13 @@ install_java_image() {
         cx mkdir -p /root/.docker
         $CT file push "$DOCKER_CONFIG_FILE" "$NAME/root/.docker/config.json"
     fi
-    log "Pulling $JAVA_IMAGE"
-    cx docker pull "$JAVA_IMAGE" >/dev/null \
-        || die "cannot pull $JAVA_IMAGE (a tag that needs a login? pass --docker-config ~/.docker/config.json)"
+    if [[ $JAVA_IMAGE =~ ^wolfi-jdk:([0-9]+)$ ]]; then
+        build_wolfi_jdk_image "${BASH_REMATCH[1]}"
+    else
+        log "Pulling $JAVA_IMAGE"
+        cx docker pull "$JAVA_IMAGE" >/dev/null \
+            || die "cannot pull $JAVA_IMAGE (a tag that needs a login? pass --docker-config ~/.docker/config.json)"
+    fi
     local probe
     probe=$(cx docker run --rm --security-opt apparmor=unconfined --entrypoint bash "$JAVA_IMAGE" -c "command -v java" 2>&1) \
         || die "cannot run $JAVA_IMAGE with bash and java (Dremio's bin/dremio needs both, use a -dev image): $probe"

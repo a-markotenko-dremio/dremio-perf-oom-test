@@ -23,19 +23,23 @@ Options:
   --java-version N           OpenJDK major version installed in the container (default: 17)
   --java-image IMAGE         run Dremio with the Java of this Docker image instead (Docker is installed in the
                              container; the image needs bash and java, use a -dev image), e.g.
-                             cgr.dev/chainguard/jdk:latest-dev; excludes --java-version
+                             cgr.dev/chainguard/jdk:latest-dev; excludes --java-version.
+                             wolfi-jdk:N (e.g. wolfi-jdk:21) is built in the container from the public
+                             cgr.dev/chainguard/wolfi-base with OpenJDK N; the built image is cached on the host
+                             in \$PERF_CACHE_DIR (default ~/.cache/perf-dremio) and loaded from there next time
   --heap-memory-mb N         DREMIO_MAX_HEAP_MEMORY_SIZE_MB, an even number (default: 4096)
   --direct-memory-mb N       DREMIO_MAX_DIRECT_MEMORY_SIZE_MB (default: 8192)
   --container-memory-mb N    memory limit of the whole container (default: heap + direct + 2048)
   --input PATH|URL           input data: a local directory (mounted read-only at the same
                              path) or a MinIO/S3 endpoint over TCP (http[s]://host:port[/bucket]
                              or s3://host:port[/bucket]); exported to the tests as INPUT_PATH
-  --name NAME                container name (default: d<dremio version>-j<java>-<memory>-<cpus>cpu, e.g. d26-1-8-j21-16G-4cpu)
+  --name NAME                container name (default: d<dremio version>-j<java>-<memory>-<cpus>cpu, e.g. d26-1-8-j21-16G-4cpu; with --java-image the image name instead of j<java>, e.g. d26-1-8-wolfi-jdk-21-16G-4cpu)
   --cpus N                   CPU limit of the container (default: unlimited)
   --image IMAGE              base image, used as is (default: a local cached image perf-java<N> with
                              OpenJDK and curl preinstalled, built from images:ubuntu/22.04 for incus
                              or ubuntu:22.04 for lxc on the first run)
-  --rebuild-image            rebuild the cached perf-java<N> image (e.g. to pick up JDK updates)
+  --rebuild-image            rebuild the cached perf-java<N> image (e.g. to pick up JDK updates); with
+                             --java-image wolfi-jdk:N, rebuild that image instead of loading it from the cache
   --java-opts "OPTS"         extra JVM options for the Dremio server (DREMIO_JAVA_SERVER_EXTRA_OPTS in
                              dremio-env), e.g. "-XX:InitiatingHeapOccupancyPercent=90 -XX:+UseParallelGC"
   --gc-log                   write the GC log to /opt/dremio/log/gc.log in the container (-Xlog:gc*, Java 9+)
@@ -50,6 +54,8 @@ Options:
                              Data is generated in reusable 10M-row blocks under STORAGE_PATH/blocks
   --allow-shared-storage     do not stop if another running container already mounts the same
                              --storage-path (runs on a shared path overwrite each other's data)
+  --allow-memory-overcommit  do not stop if the container memory limit (--container-memory-mb) exceeds the
+                             memory of this host (for tests that need to hit the OOM killer on purpose)
   --dry-run                  deploy and verify the environment, then run pytest in dry-run
                              mode: tests are collected and the environment smoke test runs,
                              but the real test (data generation, queries) is skipped
@@ -60,7 +66,7 @@ EOF
 PACKAGE="" STORAGE_PATH="" INPUT="" IMAGE=""
 JAVA_VERSION="" JAVA_IMAGE="" DOCKER_CONFIG_FILE="" HEAP_MB=4096 DIRECT_MB=8192 CONTAINER_MB="" CPUS="" NAME=""
 JAVA_OPTS="" GC_LOG=0
-RECREATE=0 DRY_RUN=0 ACCEPT_EULA=0 REBUILD_IMAGE=0 ROWS="" ALLOW_SHARED=0
+RECREATE=0 DRY_RUN=0 ACCEPT_EULA=0 REBUILD_IMAGE=0 ROWS="" ALLOW_SHARED=0 ALLOW_OVERCOMMIT=0
 
 # Reads the command line into the variables above.
 parse_args() {
@@ -85,11 +91,29 @@ parse_args() {
             --accept-eula) ACCEPT_EULA=1; shift ;;
             --rows) ROWS=$2; shift 2 ;;
             --allow-shared-storage) ALLOW_SHARED=1; shift ;;
+            --allow-memory-overcommit) ALLOW_OVERCOMMIT=1; shift ;;
             --dry-run) DRY_RUN=1; shift ;;
             -h|--help) usage; exit 0 ;;
             *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
         esac
     done
+}
+
+# The container memory limit is only a ceiling, so a limit above the RAM of the host is accepted by Incus/LXC
+# and the Dremio inside is then killed by the OOM killer under load. Stops (or only warns, with
+# --allow-memory-overcommit) when the limit exceeds the host memory, and warns when it exceeds what is free now.
+check_host_memory() {
+    local total_mb avail_mb
+    total_mb=$(awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo)
+    avail_mb=$(awk '/^MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo)
+    [[ -n $total_mb ]] || return 0
+    if (( CONTAINER_MB > total_mb )); then
+        local msg="container memory ${CONTAINER_MB} MB (heap $HEAP_MB + direct $DIRECT_MB + the rest) exceeds the memory of this host (${total_mb} MB)"
+        if (( ALLOW_OVERCOMMIT )); then echo "WARNING: $msg" >&2
+        else die "$msg; lower --heap-memory-mb/--direct-memory-mb/--container-memory-mb or pass --allow-memory-overcommit"; fi
+    elif (( CONTAINER_MB > avail_mb )); then
+        echo "WARNING: container memory ${CONTAINER_MB} MB exceeds the memory available on this host now (${avail_mb} MB)" >&2
+    fi
 }
 
 # Checks the settings and fills in the defaults that depend on each other (rows, JVM options, memory, name).
@@ -127,6 +151,7 @@ validate_settings() {
     [[ $CONTAINER_MB =~ ^[0-9]+$ ]] || die "--container-memory-mb must be an integer"
     (( HEAP_MB + DIRECT_MB < CONTAINER_MB )) \
         || die "heap ($HEAP_MB) + direct ($DIRECT_MB) MB must be less than container memory ($CONTAINER_MB MB)"
+    check_host_memory
     [[ -n $NAME ]] || NAME=$(default_container_name "$PACKAGE" "$(java_label)" "$CONTAINER_MB" "$CPUS")
 }
 

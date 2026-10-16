@@ -37,19 +37,21 @@ test-container: $(VENV)/.installed
 # Optional: NAME, CONTAINER_MB, INPUT, IMAGE, RECREATE=1 (delete an existing container first),
 #   JAVA_OPTS="-XX:..." (extra JVM options of Dremio), GC_LOG=1 (GC log in /opt/dremio/log/gc.log),
 #   JAVA_IMAGE=cgr.dev/chainguard/jdk:latest-dev (run Dremio in Docker with the Java of this image instead of JAVA),
-#   DOCKER_CONFIG=~/.docker/config.json (registry credentials for such an image).
+#     or JAVA_IMAGE=wolfi-jdk:21 (built in the container on cgr.dev/chainguard/wolfi-base with OpenJDK 21),
+#   DOCKER_CONFIG=~/.docker/config.json (registry credentials for such an image),
+#   OVERCOMMIT=1 (allow a container memory limit above the memory of the host).
 # STORAGE_PATH defaults to the one used by `make data`; the EULA is accepted (--accept-eula).
 JAVA ?= 21
 HEAP_MB ?= 4096
 DIRECT_MB ?= 8192
 create-container:
-	@test -n "$(PACKAGE)" || { echo "usage: make create-container PACKAGE=<dremio-*.tar.gz> [STORAGE_PATH=DIR] [JAVA=17] [HEAP_MB=N] [DIRECT_MB=N] [CONTAINER_MB=N] [CPUS=N] [NAME=NAME] [INPUT=PATH|URL] [JAVA_IMAGE=IMAGE] [DOCKER_CONFIG=FILE] [JAVA_OPTS=OPTS] [GC_LOG=1] [RECREATE=1]" >&2; exit 2; }
+	@test -n "$(PACKAGE)" || { echo "usage: make create-container PACKAGE=<dremio-*.tar.gz> [STORAGE_PATH=DIR] [JAVA=17] [HEAP_MB=N] [DIRECT_MB=N] [CONTAINER_MB=N] [CPUS=N] [NAME=NAME] [INPUT=PATH|URL] [JAVA_IMAGE=IMAGE] [DOCKER_CONFIG=FILE] [JAVA_OPTS=OPTS] [GC_LOG=1] [RECREATE=1] [OVERCOMMIT=1]" >&2; exit 2; }
 	./deploy_dremio.sh --package "$(PACKAGE)" --storage-path "$(STORAGE_PATH)" $(if $(JAVA_IMAGE),--java-image "$(JAVA_IMAGE)",--java-version "$(JAVA)") \
 		--heap-memory-mb "$(HEAP_MB)" --direct-memory-mb "$(DIRECT_MB)" --accept-eula \
 		$(if $(CONTAINER_MB),--container-memory-mb "$(CONTAINER_MB)") $(if $(CPUS),--cpus "$(CPUS)") \
 		$(if $(NAME),--name "$(NAME)") $(if $(INPUT),--input "$(INPUT)") $(if $(IMAGE),--image "$(IMAGE)") \
 		$(if $(JAVA_OPTS),--java-opts "$(JAVA_OPTS)") $(if $(GC_LOG),--gc-log) $(if $(DOCKER_CONFIG),--docker-config "$(DOCKER_CONFIG)") \
-		$(if $(RECREATE),--recreate) $(if $(DRY_RUN),--dry-run)
+		$(if $(RECREATE),--recreate) $(if $(OVERCOMMIT),--allow-memory-overcommit) $(if $(DRY_RUN),--dry-run)
 
 # SVG report of the results, e.g.: make report CSV="data/test_results_den.csv data/test_results_home4.csv"
 CSV ?= data/test_results.csv
