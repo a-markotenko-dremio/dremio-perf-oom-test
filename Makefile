@@ -56,7 +56,7 @@ create-container:
 # SVG report of the results, e.g.: make report CSV="data/test_results_den.csv data/test_results_home4.csv"
 CSV ?= data/test_results.csv
 report: $(VENV)/.installed
-	$(PYTHON) -m report.lines /data/oom_ranges.csv -o data/oom_lines.svg ; feh data/oom_lines.svg
+	$(PYTHON) -m report.lines data/oom_ranges.csv -o data/oom_lines.svg ; feh data/oom_lines.svg
 
 
 # PASS/FAIL scatter of three CSV columns (X, Y, verdict: header names), e.g.:

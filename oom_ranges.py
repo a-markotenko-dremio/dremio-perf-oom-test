@@ -10,13 +10,16 @@ heap size each of them does its step, one after the other, so that the chart gro
 
 The heap grows from --heap-start by --heap-step (512, 576, 640, ... MB) until it reaches the memory
 of the container (container - direct - --reserve-mb) or, for a combination, until the test passes
-at the highest row count (--rows-high): a larger heap would pass too. At every heap size a binary
-search over the row count finds the pass/fail frontier: a run that PASSes moves the lower end up,
-a run that FAILs moves the upper end down, until they are --precision apart. The first step searches
---rows-low..--rows-high, the next ones (also the first step of a combination when another one already
-has a result) a window of ±--window around the previous result (the
-frontier moves slowly while the heap grows by 64 MB); the window moves on when the frontier is
-outside it. The result of a step is the range [highest PASS, lowest FAIL] and its middle, "Mean rows".
+at the highest row count (--rows-high): a larger heap would pass too. At every heap size the script
+finds the pass/fail frontier of the row count, to --precision. Runs cost hours, so it starts with a
+guess made from the runs already recorded in data/oom_runs.csv: the runs of this heap size narrow the
+bracket [highest PASS, lowest FAIL] first; without them the frontier of the previous heap sizes of the
+combination is extrapolated by its trend (more heap never gives fewer rows), without a history of its own
+the frontier of another combination is taken. The first run is at that guess. A PASS moves the search
+up, a FAIL down, by --window (the step is wider when the frontier moved faster between the last heap
+sizes) and doubling, until the frontier is bracketed, then the bracket is halved down to --precision. Without
+any recorded run the first step searches --rows-low..--rows-high by halving. The result of a step is the
+range [highest PASS, lowest FAIL] and its middle, "Mean rows".
 
 A run counts as FAIL only when it died with a Java heap OOM ("Heap monitor detected that the heap is almost
 full" / OutOfHeapMemoryException of Dremio, or "OutOfMemoryError: Java heap space" / "GC overhead limit
@@ -131,8 +134,85 @@ def search(run, lo, hi, precision, floor, ceil):
         return Result("RANGE", pass_max, fail_min)
 
 
-def window_around(center, half, floor, ceil):
-    return max(floor, round(center - half)), min(ceil, round(center + half))
+def search_guided(run, lo, hi, guess, step, precision, floor, ceil):
+    """The search of a step that starts from what is known: `lo` is the highest known PASS and `hi` the lowest
+    known FAIL (millions of rows, None when unknown), `guess` where the first run goes when both are unknown.
+
+    An unknown end is found by moving from the known one by `step`, doubling it after every run in the same
+    direction (PASS up, FAIL down), up to `ceil` / `floor`: ALL_PASS / ALL_FAIL. Then the bracket is halved."""
+    if lo is None and hi is None:
+        guess = min(max(guess, floor), ceil)
+        if run(guess) == PASS:
+            lo = guess
+        else:
+            hi = guess
+    move = step
+    while hi is None:                              # a PASS is known: look up for a FAIL
+        if lo >= ceil:
+            return Result("ALL_PASS", pass_max=lo)
+        nxt = min(lo + move, ceil)
+        if run(nxt) == PASS:
+            lo, move = nxt, move * 2
+        else:
+            hi = nxt
+    move = step
+    while lo is None:                              # a FAIL is known: look down for a PASS
+        if hi <= floor:
+            return Result("ALL_FAIL", fail_min=hi)
+        nxt = max(hi - move, floor)
+        if run(nxt) == FAIL:
+            hi, move = nxt, move * 2
+        else:
+            lo = nxt
+    while hi - lo > precision:
+        mid = (lo + hi) // 2
+        if run(mid) == PASS:
+            lo = mid
+        else:
+            hi = mid
+    return Result("RANGE", lo, hi)
+
+
+def bracket(outcomes):
+    """(highest PASS below the lowest FAIL, lowest FAIL) of the runs {rows_m: PASS | FAIL}; None for an unknown end."""
+    fails = [r for r, o in outcomes.items() if o == FAIL]
+    fail_min = min(fails) if fails else None
+    passes = [r for r, o in outcomes.items() if o == PASS and (fail_min is None or r < fail_min)]
+    return (max(passes) if passes else None), fail_min
+
+
+def estimates(heap_runs, below_heap):
+    """[(heap, frontier estimate, kind)] of the heap sizes under `below_heap`, from their recorded runs. The estimate
+    is the middle of a full bracket ("full"), else the only known end: "lower" with only PASS (the frontier is
+    above it), "upper" with only FAIL (below it)."""
+    out = []
+    for heap in sorted(h for h in heap_runs if h < below_heap):
+        p, f = bracket(heap_runs[heap])
+        if p is not None and f is not None:
+            out.append((heap, (p + f) / 2, "full"))
+        elif p is not None:
+            out.append((heap, p, "lower"))
+        elif f is not None:
+            out.append((heap, f, "upper"))
+    return out
+
+
+def predict_start(found, heap, window):
+    """(the row count of the first run, the first step of the search) for `heap` from the estimates of the smaller
+    heap sizes, None without any. The frontier does not fall with a growing heap: it is extrapolated by the trend of
+    the last two full brackets, and is not put below a lower bound found at a later heap size."""
+    if not found:
+        return None
+    guess, step = found[-1][1], window
+    full = [e for e in found if e[2] == "full"]
+    if len(full) >= 2:
+        (h0, e0, _), (h1, e1, _) = full[-2], full[-1]
+        guess = e1 + max(0.0, (e1 - e0) / (h1 - h0)) * (heap - h1)
+        step = max(window, round(abs(guess - e1) / 2))
+    lower = [e[1] for e in found if e[2] == "lower" and (not full or e[0] > full[-1][0])]
+    if lower:
+        guess = max(guess, max(lower))
+    return round(guess), step
 
 
 # ------------------------------------------------------------------ recorded state
@@ -164,6 +244,14 @@ class State:
         self.runs = {(r["Dremio ver"], r["Java image"], int(r["Heap MB"]), int(r["Rows"])): r["Outcome"]
                      for r in read_csv(runs_csv)}
 
+    def heap_runs(self, combo):
+        """{heap: {rows_m: PASS | FAIL}} of the recorded runs of a combination (ERROR runs say nothing about the frontier)."""
+        out = {}
+        for (version, image, heap, rows_m), outcome in self.runs.items():
+            if (version, image) == (combo.version, combo.image) and outcome in (PASS, FAIL):
+                out.setdefault(heap, {})[rows_m] = outcome
+        return out
+
     def run_outcome(self, combo, heap, rows_m):
         return self.runs.get((combo.version, combo.image, heap, rows_m))
 
@@ -185,35 +273,42 @@ class State:
         append_csv(self.ranges_csv, RANGES_COLUMNS, row)
 
 
-def step_center(row):
-    """The middle of a recorded step in millions of rows, None when it has none (ALL_FAIL / ALL_PASS)."""
-    return results_report.parse_rows(row["Mean rows"]) / 10**6 if row["Mean rows"] else None
-
-
 # ------------------------------------------------------------------ one combination
 class Progress:
     """Where the walk over the heap sizes stands for one combination."""
 
     def __init__(self):
-        self.center = None       # middle of the last finished step, millions of rows
         self.skipped = 0         # heap steps skipped in a row
         self.finished = False    # nothing fails any more: larger heaps pass too
 
 
-def run_step(args, combo, heap, runner, state, progress, log=print):
+def first_guess(args, state, combo, others, heap):
+    """The start of the search of a step from the recorded runs: (row count of the first run, first step), None when
+    nothing is recorded. The history of the combination goes first, then the latest result of another one."""
+    found = estimates(state.heap_runs(combo), heap)
+    for other in others:
+        if found:
+            break
+        found = estimates(state.heap_runs(other), heap + 1)[-1:]       # its latest, also at this very heap size
+    return predict_start(found, heap, args.window)
+
+
+def run_step(args, combo, heap, runner, state, progress, log=print, others=()):
     """The step of a combination at one heap size. `runner.run(heap, rows_m) -> PASS | FAIL | ERROR`."""
     done = state.step(combo, heap)
     if done:
         log(f"### {combo.version} {combo.image} heap={heap}: recorded ({done['Status']}, mean {done['Mean rows'] or '-'})")
         progress.finished = done["Status"] == "ALL_PASS"
-        if done["Status"] != "ALL_PASS":
-            progress.center = step_center(done) if done["Status"] == "RANGE" else args.rows_low + args.window
         return
-    if progress.center is None:
-        lo, hi = args.rows_low, args.rows_high
+    lo, hi = bracket(state.heap_runs(combo).get(heap, {}))
+    guess = first_guess(args, state, combo, others, heap)
+    start, step = guess if guess else (None, args.window)
+    if lo is not None or hi is not None:
+        log(f"### {combo.version} {combo.image} heap={heap}: recorded runs give PASS up to {lo or '-'}M, FAIL from {hi or '-'}M")
+    elif guess:
+        log(f"### {combo.version} {combo.image} heap={heap}: first run at {start}M (from the recorded runs), step {step}M")
     else:
-        lo, hi = window_around(progress.center, args.window, args.rows_low, args.rows_high)
-    log(f"### {combo.version} {combo.image} heap={heap}: searching {lo}M..{hi}M")
+        log(f"### {combo.version} {combo.image} heap={heap}: nothing recorded, searching {args.rows_low}M..{args.rows_high}M")
 
     def run(rows_m):
         known = state.run_outcome(combo, heap, rows_m)
@@ -229,7 +324,10 @@ def run_step(args, combo, heap, runner, state, progress, log=print):
         return outcome
 
     try:
-        result = search(run, lo, hi, args.precision, args.rows_low, args.rows_high)
+        if lo is None and hi is None and not guess:
+            result = search(run, args.rows_low, args.rows_high, args.precision, args.rows_low, args.rows_high)
+        else:
+            result = search_guided(run, lo, hi, start, step, args.precision, args.rows_low, args.rows_high)
     except StepSkipped as e:
         progress.skipped += 1
         log(f"    heap={heap} skipped: the run at {e} ended with an error that is not a heap OOM "
@@ -244,8 +342,6 @@ def run_step(args, combo, heap, runner, state, progress, log=print):
     if result.status == "ALL_PASS":
         log("    no failure at the highest row count: a larger heap passes too, this combination is done")
         progress.finished = True
-    else:
-        progress.center = result.mean if result.status == "RANGE" else args.rows_low + args.window
 
 
 def run_all(args, combos, runner_for, state, log=print):
@@ -257,11 +353,9 @@ def run_all(args, combos, runner_for, state, log=print):
         for combo in combos:
             if progress[combo].finished:
                 continue
-            if progress[combo].center is None:      # no result of its own yet: start near another combination's
-                progress[combo].center = next((p.center for p in progress.values() if p.center is not None), None)
             runner = runner_for(combo)
             try:
-                run_step(args, combo, heap, runner, state, progress[combo], log)
+                run_step(args, combo, heap, runner, state, progress[combo], log, others=[c for c in combos if c != combo])
             finally:
                 getattr(runner, "delete", lambda: None)()
         if all(p.finished for p in progress.values()):
@@ -362,7 +456,7 @@ def parse_args(argv=None):
     ap.add_argument("--rows-low", type=int, default=10, metavar="M", help="lowest row count, millions (default 10)")
     ap.add_argument("--rows-high", type=int, default=1440, metavar="M", help="highest row count, millions (default 1440 = 1.44G)")
     ap.add_argument("--precision", type=int, default=10, metavar="M", help="the search stops when PASS and FAIL are this close (default 10)")
-    ap.add_argument("--window", type=int, default=10, metavar="M", help="half width of the search window around the previous result after the first step (default 10)")
+    ap.add_argument("--window", type=int, default=10, metavar="M", help="the first step of the search away from the guess, millions of rows (default 10); it doubles while the frontier is not bracketed")
     ap.add_argument("--max-skipped", type=int, default=3, help="stop after this many skipped heap steps in a row")
     ap.add_argument("--retry-errors", action="store_true", help="run again the runs recorded as ERROR")
     ap.add_argument("--storage-root", default="/mnt/ubuntu-var/dremio", help="a combination stores its data in <root>/<container name>")
@@ -393,7 +487,7 @@ def main(argv=None):
     heaps = heap_sizes(args.heap_start, args.heap_step, args.heap_max)
     print(f"{len(combos)} combinations x heap {heaps[0]}..{heaps[-1]} MB step {args.heap_step} ({len(heaps)} steps), "
           f"container {args.container_mb} MB, direct {args.direct_mb} MB, {args.cpus} CPUs, "
-          f"rows {args.rows_low}M..{args.rows_high}M, precision {args.precision}M, window +-{args.window}M")
+          f"rows {args.rows_low}M..{args.rows_high}M, precision {args.precision}M, first step {args.window}M")
     for combo in combos:
         recorded = sum(1 for h in heaps if state.step(combo, h))
         print(f"  {combo.version:<12} {combo.image:<24} {recorded}/{len(heaps)} steps recorded")

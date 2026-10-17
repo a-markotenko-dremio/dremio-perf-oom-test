@@ -4,6 +4,7 @@ import argparse
 import pytest
 
 import oom_ranges as o
+import results_report
 
 
 def threshold_run(limit, calls=None):
@@ -48,11 +49,6 @@ def test_search_stops_at_the_first_error():
         raise o.StepSkipped(rows)
     with pytest.raises(o.StepSkipped):
         search(run)
-
-
-def test_window_is_clipped_to_the_row_range():
-    assert o.window_around(100, 150, 10, 1440) == (10, 250)
-    assert o.window_around(1400, 150, 10, 1440) == (1250, 1440)
 
 
 def test_heap_sizes():
@@ -107,17 +103,24 @@ def test_combo_version_is_short():
     assert combo().version == "26.1.10"
 
 
-def test_steps_follow_the_heap_and_use_a_window_after_the_first(tmp_path):
+def mean_of(row):
+    return results_report.parse_rows(row["Mean rows"]) / 10**6
+
+
+def test_steps_follow_the_heap_and_start_at_the_recorded_frontier(tmp_path):
     state = o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
-    runner = FakeRunner(lambda heap: 100 + (heap - 512) * 2)          # frontier 100M, 228M, 356M
+    runner = FakeRunner(lambda heap: 100 + (heap - 512) * 2)          # frontier 100M, 228M, 356M, 484M, 612M
     o.run_all(make_args(tmp_path), [combo()], lambda c: runner, state, log=lambda *a: None)
     rows = read(tmp_path / "ranges.csv")
     assert [r["Heap MB"] for r in rows] == ["512", "576", "640", "704", "768"]
     assert all(r["Status"] == "RANGE" for r in rows)
-    means = [o.step_center(r) for r in rows]
+    means = [mean_of(r) for r in rows]
     assert means == sorted(means) and abs(means[0] - 100) <= 10 and abs(means[-1] - 612) <= 10
-    second_step = [rows_m for heap, rows_m in runner.calls if heap == 576]
-    assert min(second_step) >= round(means[0]) - 150 - 1 and max(second_step) <= round(means[0]) + 150 + 1
+    first_runs = {}
+    for heap, rows_m in runner.calls:
+        first_runs.setdefault(heap, rows_m)
+    assert first_runs[576] == round(means[0])                       # the first run is at the previous frontier
+    assert abs(first_runs[768] - 612) < abs(first_runs[576] - 228)  # the trend of the last steps is followed
 
 
 def test_heap_steps_stop_when_everything_passes(tmp_path):
@@ -250,11 +253,78 @@ def test_a_combination_without_a_result_starts_in_a_window_around_another_ones(t
     assert first[0] == 725 and abs(second[0] - 812) <= 150
 
 
-def test_next_step_starts_at_the_previous_range_and_needs_few_runs_when_it_did_not_move():
-    lo, hi = o.window_around(37.5, 10, 10, 1440)
+def guided(limit, lo=None, hi=None, guess=100, step=10, precision=10, floor=10, ceil=1440):
     calls = []
+
     def run(rows):
         calls.append(rows)
-        return o.PASS if rows < 40 else o.FAIL
-    r = o.search(run, lo, hi, 10, 10, 1440)
-    assert r.status == "RANGE" and r.pass_max < 40 <= r.fail_min and len(calls) <= 3 and min(calls) >= 27
+        return o.PASS if rows < limit else o.FAIL
+    return o.search_guided(run, lo, hi, guess, step, precision, floor, ceil), calls
+
+
+def test_guided_search_with_a_good_guess_needs_three_runs():
+    r, calls = guided(limit=107, guess=105, step=10)
+    assert r.status == "RANGE" and r.pass_max < 107 <= r.fail_min and r.fail_min - r.pass_max <= 10 and len(calls) <= 3
+
+
+def test_guided_search_gallops_away_from_a_wrong_guess_in_few_runs():
+    r, calls = guided(limit=700, guess=100)                   # 600M above the guess: 10, 20, 40, ... steps
+    assert r.pass_max < 700 <= r.fail_min and r.fail_min - r.pass_max <= 10 and len(calls) <= 12
+    r, calls = guided(limit=30, guess=500)
+    assert r.pass_max < 30 <= r.fail_min and r.fail_min - r.pass_max <= 10 and len(calls) <= 12
+
+
+def test_guided_search_from_a_known_end_does_not_run_it_again():
+    r, calls = guided(limit=300, lo=250)
+    assert 250 not in calls and r.pass_max < 300 <= r.fail_min
+    r, calls = guided(limit=300, hi=400)
+    assert 400 not in calls and r.pass_max < 300 <= r.fail_min
+    r, calls = guided(limit=300, lo=290, hi=305)               # a bracket of the recorded runs: halving only
+    assert calls == [297] and r.status == "RANGE"
+
+
+def test_guided_search_all_pass_and_all_fail():
+    assert guided(limit=10**9, guess=100)[0].status == "ALL_PASS"
+    r, calls = guided(limit=0, guess=100)
+    assert r.status == "ALL_FAIL" and r.mean is None and min(calls) == 10
+
+
+def test_bracket_of_mixed_runs_is_taken_below_the_lowest_fail():
+    assert o.bracket({50: o.PASS, 100: o.FAIL, 200: o.PASS, 300: o.FAIL}) == (50, 100)
+    assert o.bracket({50: o.PASS}) == (50, None) and o.bracket({50: o.FAIL}) == (None, 50) and o.bracket({}) == (None, None)
+
+
+def test_predict_start_follows_the_trend_and_a_lower_bound():
+    full = lambda h, e: (h, e, "full")
+    assert o.predict_start([], 576, 10) is None
+    assert o.predict_start([full(512, 500)], 576, 10) == (500, 10)                       # one step: no trend, flat
+    assert o.predict_start([full(512, 500), full(576, 600)], 640, 10) == (700, 50)       # +100M per 64 MB
+    assert o.predict_start([full(512, 600), full(576, 500)], 640, 10) == (500, 10)       # the frontier does not fall
+    assert o.predict_start([full(512, 500), full(576, 600), (640, 750, "lower")], 704, 10)[0] == 800
+    assert o.predict_start([full(512, 500), full(576, 600), (640, 900, "lower")], 704, 10)[0] == 900
+    assert o.predict_start([(512, 658, "lower")], 576, 10) == (658, 10)
+
+
+def test_estimates_use_the_runs_of_the_smaller_heap_sizes_only():
+    runs = {512: {400: o.PASS, 500: o.FAIL}, 576: {600: o.PASS}, 640: {300: o.FAIL}, 704: {1: o.PASS}}
+    assert o.estimates(runs, 704) == [(512, 450.0, "full"), (576, 600, "lower"), (640, 300, "upper")]
+
+
+def test_a_step_with_recorded_runs_does_not_repeat_them_and_a_known_bracket_needs_no_search(tmp_path):
+    state = o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    for rows, outcome in ((460, o.PASS), (530, o.FAIL), (495, o.PASS), (512, o.FAIL)):
+        state.add_run(combo(), 512, rows, outcome)
+    runner = FakeRunner(lambda heap: 500)
+    o.run_all(make_args(tmp_path, heap_max=512), [combo()], lambda c: runner, state, log=lambda *a: None)
+    assert runner.calls == [(512, 503)]                                  # only the halving of [495, 512]
+    assert read(tmp_path / "ranges.csv")[0]["Status"] == "RANGE"
+
+
+def test_a_moving_frontier_costs_few_runs_per_step(tmp_path):
+    state = o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    runner = FakeRunner(lambda heap: 300 + (heap - 512) * 3)             # +192M per heap step
+    o.run_all(make_args(tmp_path, heap_max=1024, precision=20), [combo()], lambda c: runner, state, log=lambda *a: None)
+    per_heap = {}
+    for heap, _ in runner.calls:
+        per_heap[heap] = per_heap.get(heap, 0) + 1
+    assert all(n <= 6 for h, n in per_heap.items() if h >= 704), per_heap   # once the trend is known
