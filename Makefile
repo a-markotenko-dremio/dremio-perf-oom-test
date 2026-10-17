@@ -1,7 +1,7 @@
 VENV := .venv
 PYTHON := $(VENV)/bin/python
 
-.PHONY: test test-container create-container venv clean data report
+.PHONY: test test-container create-container venv clean data report scatter
 
 test: $(VENV)/.installed
 	$(PYTHON) -m pytest -v -rs tests/test_catalog_sales.py
@@ -57,3 +57,10 @@ create-container:
 CSV ?= data/test_results.csv
 report: $(VENV)/.installed
 	$(PYTHON) -m report $(CSV) -o report.svg
+
+# PASS/FAIL scatter of three CSV columns (X, Y, verdict: header names), e.g.:
+#   make scatter CSV=data/test_results.csv X=Rows Y=DREMIO_MAX_HEAP_MEMORY_SIZE_MB V=Verdict
+# K/M/G suffixes in the values are understood and used on the axes.
+scatter: $(VENV)/.installed
+	@test -n "$(X)" -a -n "$(Y)" -a -n "$(V)" || { echo "usage: make scatter CSV=file.csv X=<col> Y=<col> V=<verdict col> [OUT=scatter.svg]" >&2; exit 2; }
+	$(PYTHON) -m report.scatter "$(CSV)" "$(X)" "$(Y)" "$(V)" -o "$(or $(OUT),scatter.svg)"
