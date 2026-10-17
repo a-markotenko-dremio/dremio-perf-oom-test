@@ -3,6 +3,7 @@ import argparse
 
 import pytest
 
+import csvio
 import oom_ranges as o
 import results_report
 
@@ -96,7 +97,7 @@ def combo():
 
 
 def read(path):
-    return o.read_csv(path)
+    return csvio.read_rows(path, missing_ok=True)
 
 
 def test_combo_version_is_short():

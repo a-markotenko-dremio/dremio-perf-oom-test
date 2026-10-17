@@ -40,7 +40,6 @@ Files (resumable: what is recorded is not run again; --retry-errors runs ERROR r
 Run with PLAN=1 or --plan to see the combinations, the heap sizes and what is already recorded.
 """
 import argparse
-import csv
 import os
 import re
 import shutil
@@ -50,11 +49,13 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import csvio
+import defaults
 import results_report
 from report.runs import short_version
 
 ROOT = Path(__file__).resolve().parent
-DOWNLOADS = Path("/mnt/ubuntu-var/dremio/Downloads")
+DOWNLOADS = defaults.PACKAGES_DIR
 PASS, FAIL, ERROR = "PASS", "FAIL", "ERROR"
 # Dremio's own heap monitor cancels the query ("Heap monitor detected that the heap is almost full",
 # OutOfHeapMemoryException) before the JVM throws; the JVM errors cover a heap that filled up faster.
@@ -240,33 +241,14 @@ def predict_start(found, heap, window):
 
 
 # ------------------------------------------------------------------ recorded state
-def read_csv(path):
-    path = Path(path)
-    if not path.exists():
-        return []
-    with path.open(newline="") as f:
-        return list(csv.DictReader(f))
-
-
-def append_csv(path, columns, row):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    new = not path.exists() or path.stat().st_size == 0
-    with path.open("a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=columns)
-        if new:
-            w.writeheader()
-        w.writerow(row)
-
-
 class State:
     """What earlier runs of the script recorded: the finished steps and the single runs."""
 
     def __init__(self, ranges_csv, runs_csv):
         self.ranges_csv, self.runs_csv = ranges_csv, runs_csv
-        self.steps = {(r["Dremio ver"], r["Java image"], int(r["Heap MB"])): r for r in read_csv(ranges_csv)}
+        self.steps = {(r["Dremio ver"], r["Java image"], int(r["Heap MB"])): r for r in csvio.read_rows(ranges_csv, missing_ok=True)}
         self.runs = {(r["Dremio ver"], r["Java image"], int(r["Heap MB"]), int(r["Rows"])): r["Outcome"]
-                     for r in read_csv(runs_csv)}
+                     for r in csvio.read_rows(runs_csv, missing_ok=True)}
 
     def heap_runs(self, combo):
         """{heap: {rows_m: PASS | FAIL}} of the recorded runs of a combination (ERROR runs say nothing about the frontier)."""
@@ -281,7 +263,7 @@ class State:
 
     def add_run(self, combo, heap, rows_m, outcome):
         self.runs[combo.version, combo.image, heap, rows_m] = outcome
-        append_csv(self.runs_csv, RUNS_COLUMNS, {
+        csvio.append_row(self.runs_csv, RUNS_COLUMNS, {
             "Timestamp": results_report.timestamp(), "Dremio ver": combo.version, "Java image": combo.image,
             "Heap MB": heap, "Rows": rows_m, "Outcome": outcome})
 
@@ -294,7 +276,7 @@ class State:
                "Pass max rows": fmt(result.pass_max), "Fail min rows": fmt(result.fail_min),
                "Mean rows": fmt(result.mean), "Status": result.status}
         self.steps[combo.version, combo.image, heap] = row
-        append_csv(self.ranges_csv, RANGES_COLUMNS, row)
+        csvio.append_row(self.ranges_csv, RANGES_COLUMNS, row)
 
 
 # ------------------------------------------------------------------ one combination
@@ -481,7 +463,7 @@ class Runner:
     def run(self, heap, rows_m):
         if self.deployed_heap != heap and not self.deploy(heap):
             return ERROR
-        env = {**os.environ, "BLOCKS_DIR": os.environ.get("BLOCKS_DIR", f"{self.args.storage_root}/blocks")}
+        env = {**os.environ, "BLOCKS_DIR": os.environ.get("BLOCKS_DIR", f"{self.args.storage_root}/{defaults.BLOCKS_SUBDIR}")}
         started = time.time()
         proc = subprocess.Popen(["make", "test-container", f"CONTAINER={self.name}", f"ROW_COUNT={rows_m}M"],
                                 cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -536,7 +518,7 @@ def parse_args(argv=None):
     ap.add_argument("--window", type=int, default=10, metavar="M", help="the first step of the search away from the guess, millions of rows (default 10); it doubles while the frontier is not bracketed")
     ap.add_argument("--max-skipped", type=int, default=3, help="stop after this many skipped heap steps in a row")
     ap.add_argument("--retry-errors", action="store_true", help="run again the runs recorded as ERROR")
-    ap.add_argument("--storage-root", default="/mnt/ubuntu-var/dremio", help="a combination stores its data in <root>/<container name>")
+    ap.add_argument("--storage-root", default=str(defaults.STORAGE_ROOT), help="a combination stores its data in <root>/<container name>")
     ap.add_argument("--ranges-csv", default=str(ROOT / "data" / "oom_ranges.csv"))
     ap.add_argument("--runs-csv", default=str(ROOT / "data" / "oom_runs.csv"))
     ap.add_argument("--plan", action="store_true", help="only print what would run")

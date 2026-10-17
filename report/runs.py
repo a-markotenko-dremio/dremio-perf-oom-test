@@ -3,10 +3,10 @@
 Runs are grouped as {version: {rows: {(heap_mb, direct_mb): [passes, fails]}}}. Rows without a
 verdict (unfinished runs) are skipped. Runs are pooled over container RAM and CPUs.
 """
-import csv
 import re
 from collections import defaultdict
 
+import csvio
 import results_report
 
 
@@ -20,20 +20,19 @@ def load(paths):
     """({version: {rows: {(heap_mb, direct_mb): [passes, fails]}}}, set of Host RAM values)."""
     data, rams = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: [0, 0]))), set()
     for path in paths:
-        with open(path, newline="") as f:
-            for r in csv.DictReader(f):
-                verdict = (r.get("Verdict") or "").strip().upper()
-                if verdict not in ("PASS", "FAIL") or not r.get("Dremio ver"):
-                    continue
-                try:
-                    heap = int(r["DREMIO_MAX_HEAP_MEMORY_SIZE_MB"])
-                    direct = int(r["DREMIO_MAX_DIRECT_MEMORY_SIZE_MB"])
-                    rows = results_report.parse_rows(r["Rows"])
-                except (ValueError, KeyError):
-                    continue
-                data[short_version(r["Dremio ver"])][rows][(heap, direct)][0 if verdict == "PASS" else 1] += 1
-                if r.get("Host RAM"):
-                    rams.add(r["Host RAM"])
+        for r in csvio.read_rows(path):
+            verdict = (r.get("Verdict") or "").strip().upper()
+            if verdict not in ("PASS", "FAIL") or not r.get("Dremio ver"):
+                continue
+            try:
+                heap = int(r["DREMIO_MAX_HEAP_MEMORY_SIZE_MB"])
+                direct = int(r["DREMIO_MAX_DIRECT_MEMORY_SIZE_MB"])
+                rows = results_report.parse_rows(r["Rows"])
+            except (ValueError, KeyError):
+                continue
+            data[short_version(r["Dremio ver"])][rows][(heap, direct)][0 if verdict == "PASS" else 1] += 1
+            if r.get("Host RAM"):
+                rams.add(r["Host RAM"])
     return data, rams
 
 

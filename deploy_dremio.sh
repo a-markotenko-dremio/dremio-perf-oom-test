@@ -125,10 +125,9 @@ validate_settings() {
     ROWS=${ROWS:-${ROW_COUNT:-}}
     if [[ -n $ROWS ]]; then
         # number with an optional K/M/G suffix (decimal): 10M -> 10000000, 1.44G -> 1440000000
-        [[ $ROWS =~ ^([0-9]+(\.[0-9]+)?)([KkMmGg]?)$ ]] \
-            || die "--rows must be a number with an optional K/M/G suffix (e.g. 10M, 1.44G), got '$ROWS'"
-        case ${BASH_REMATCH[3]} in [Kk]) mult=1000 ;; [Mm]) mult=1000000 ;; [Gg]) mult=1000000000 ;; *) mult=1 ;; esac
-        ROWS=$(awk -v v="${BASH_REMATCH[1]}" -v m="$mult" 'BEGIN { printf "%.0f", v * m }')
+        parsed=$(PYTHONPATH=$SCRIPT_DIR python3 -c 'import sys, results_report; print(results_report.parse_rows(sys.argv[1]))' "$ROWS" 2>/dev/null) \
+            || die "--rows must be a whole number of rows with an optional K/M/G suffix (e.g. 10M, 1.44G), got '$ROWS'"
+        ROWS=$parsed
         (( ROWS >= 1 && ROWS <= 2147483647 )) || die "--rows must be in 1..2147483647 rows, got $ROWS"
     fi
     (( GC_LOG )) && JAVA_OPTS="${JAVA_OPTS:+$JAVA_OPTS }-Xlog:gc*:file=/opt/dremio/log/gc.log:time,uptime:filecount=5,filesize=50m"

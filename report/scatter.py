@@ -10,33 +10,26 @@ Rows whose X or Y is not a number, or whose verdict is neither PASS nor FAIL, ar
     python3 -m report.scatter data/test_results.csv Rows DREMIO_MAX_HEAP_MEMORY_SIZE_MB Verdict
 """
 import argparse
-import csv
 import math
-import re
 import sys
 from html import escape
 
+import csvio
+import quantities
 from .canvas import CSS, DARK, LEFT, LIGHT, PW, W, Svg, y_axis
 
 COLORS = {"PASS": ("#1a9850", "#3dbb6f"), "FAIL": ("#d73027", "#f06b5f")}  # light, dark theme
-UNITS = (("G", 10**9), ("M", 10**6), ("K", 10**3))
 PH, TOP = 460, 90
 
 
 def parse_value(text):
     """'100K' -> 100000.0, '1.44G' -> 1440000000.0, '2.5' -> 2.5. ValueError for anything else."""
-    m = re.fullmatch(r"([+-]?\d+(?:\.\d+)?)\s*([KMG]?)", str(text).strip().upper())
-    if not m:
-        raise ValueError(f"not a number with an optional K/M/G suffix: {text!r}")
-    return float(m.group(1)) * dict(UNITS + (("", 1),))[m.group(2)]
+    return float(quantities.parse_quantity(text, signed=True))
 
 
 def format_value(v):
     """The inverse of parse_value for axis labels: 1440000000 -> '1.44G', 100000 -> '100K', 4096 -> '4096'."""
-    for unit, size in UNITS:
-        if abs(v) >= size and math.isclose(round(v / size, 2) * size, v, rel_tol=1e-9):
-            return f"{v / size:.2f}".rstrip("0").rstrip(".") + unit
-    return f"{v:g}"
+    return quantities.format_quantity(v, exact=True)
 
 
 def nice_ticks(lo, hi, want=8):
@@ -73,14 +66,12 @@ def column_index(header, name):
 
 def load(path, x_spec, y_spec, v_spec):
     """([(x, y, 'PASS'|'FAIL', line number)], skipped row count, (x name, y name, verdict name))."""
-    with open(path, newline="") as f:
-        rows = list(csv.reader(f))
-    if not rows:
+    header, rows = csvio.read_table(path)
+    if not header:
         raise SystemExit(f"{path} is empty")
-    header = rows[0]
     xi, yi, vi = (column_index(header, s) for s in (x_spec, y_spec, v_spec))
     points, skipped = [], 0
-    for n, r in enumerate(rows[1:], start=2):
+    for n, r in enumerate(rows, start=2):
         try:
             verdict = r[vi].strip().upper()
             if verdict not in COLORS:

@@ -1,14 +1,13 @@
 """Appends one row per test run to a CSV with the same columns as 'Per tests OOM results'."""
-import csv
 import getpass
 import math
 import os
 import platform
-import re
 import socket
 import time
-from decimal import Decimal
-from pathlib import Path
+
+import csvio
+import quantities
 
 COLUMNS = ["Timestamp", "Host src", "Data src", "Host dst", "Data dst", "Dremio ver", "JVM ver", "Host RAM", "CPUs",
            "DREMIO_MAX_DIRECT_MEMORY_SIZE_MB", "DREMIO_MAX_HEAP_MEMORY_SIZE_MB", "Rows",
@@ -40,10 +39,10 @@ def host_ram():
 
 def parse_rows(text):
     """'10M' -> 10000000, '1.44G' -> 1440000000, '100K' -> 100000, '12345' -> 12345 (decimal units)."""
-    m = re.fullmatch(r"(\d+(?:\.\d+)?)([KMG]?)", str(text).strip().upper())
-    if not m:
-        raise ValueError(f"invalid row count {text!r}: use a number with an optional K/M/G suffix, e.g. 10M, 1.44G")
-    value = Decimal(m.group(1)) * {"": 1, "K": 10**3, "M": 10**6, "G": 10**9}[m.group(2)]
+    try:
+        value = quantities.parse_quantity(text)
+    except ValueError:
+        raise ValueError(f"invalid row count {text!r}: use a number with an optional K/M/G suffix, e.g. 10M, 1.44G") from None
     if value != value.to_integral_value():
         raise ValueError(f"row count {text!r} is not a whole number of rows")
     return int(value)
@@ -56,10 +55,7 @@ def cpus():
 
 def format_rows(n):
     """1440000000 -> '1.44G', 10000000 -> '10M', 100000 -> '100K'."""
-    for unit, size in (("G", 10**9), ("M", 10**6), ("K", 10**3)):
-        if n >= size:
-            return f"{n / size:.2f}".rstrip("0").rstrip(".") + unit
-    return str(n)
+    return quantities.format_quantity(n)
 
 
 def run_by():
@@ -68,10 +64,4 @@ def run_by():
 
 def append_row(path, row):
     """Appends `row` (a dict keyed by COLUMNS), writing the header when the file is new."""
-    path = Path(path)
-    new = not path.exists() or path.stat().st_size == 0
-    with path.open("a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=COLUMNS)
-        if new:
-            w.writeheader()
-        w.writerow(row)
+    csvio.append_row(path, COLUMNS, row)

@@ -18,7 +18,7 @@ clean:
 
 # Pre-generate the Parquet data blocks (reused by `make test`), e.g.:
 #   make data ROW_COUNT=1440000000   (or ROW_COUNT=1.44G; K/M/G suffixes work everywhere)
-STORAGE_PATH ?= /mnt/ubuntu-var/dremio
+STORAGE_PATH ?= $(shell python3 -c "import defaults; print(defaults.STORAGE_ROOT)")
 ROW_COUNT ?= 100000
 data: $(VENV)/.installed
 	$(PYTHON) generate_data.py --rows $(ROW_COUNT) --storage $(STORAGE_PATH)

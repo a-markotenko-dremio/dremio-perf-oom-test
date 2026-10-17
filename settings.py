@@ -7,7 +7,7 @@
   ROW_COUNT        number of rows to generate, e.g. 10000000, 10M or 1.44G (default 100000, max 2147483647)
   BLOCKS_DIR       optional directory of generated blocks shared by several STORAGE_PATHs
                    (<STORAGE_PATH>/blocks becomes a symlink to it; same filesystem recommended)
-  STORAGE_PATH     directory where both tables are stored (default /mnt/ubuntu-var/dremio).
+  STORAGE_PATH     directory where both tables are stored (default: defaults.STORAGE_ROOT).
                    Two NAS sources are created in Dremio: <STORAGE_PATH>/input and
                    <STORAGE_PATH>/output. The directory must be writable by the Dremio user.
   PRE_SQL          optional ';'-separated statements run before the test body, e.g. to raise the parallelism:
@@ -21,6 +21,7 @@
 import os
 from pathlib import Path
 
+import defaults
 import results_report
 
 DREMIO_URL = os.environ.get("DREMIO_URL", "http://localhost:9047").rstrip("/")
@@ -30,7 +31,7 @@ MAX_ROW_COUNT = 2**31 - 1  # ids are generated as INT in generate_data.py
 DATA_DIR = Path(__file__).parent / "data"  # the SQL files and the result CSVs
 REPORT_CSV = Path(os.environ.get("REPORT_CSV", DATA_DIR / "test_results.csv"))
 
-STORAGE_PATH = Path(os.environ.get("STORAGE_PATH", "/mnt/ubuntu-var/dremio"))
+STORAGE_PATH = Path(os.environ.get("STORAGE_PATH", defaults.STORAGE_ROOT))
 INPUT_SOURCE = "perf_input"
 OUTPUT_SOURCE = "perf_output"
 
