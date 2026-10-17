@@ -20,7 +20,7 @@ Required:
                              the container at the same path (STORAGE_PATH for the tests)
 
 Options:
-  --java-version N           OpenJDK major version installed in the container (default: 17)
+  --java-version N           OpenJDK major version installed in the container (default: $DEFAULT_JAVA_VERSION)
   --java-image IMAGE         run Dremio with the Java of this Docker image instead (Docker is installed in the
                              container; the image needs bash and java, use a -dev image), e.g.
                              cgr.dev/chainguard/jdk:latest-dev; excludes --java-version.
@@ -64,6 +64,7 @@ EOF
 }
 
 PACKAGE="" STORAGE_PATH="" INPUT="" IMAGE=""
+DEFAULT_JAVA_VERSION=21
 JAVA_VERSION="" JAVA_IMAGE="" DOCKER_CONFIG_FILE="" HEAP_MB=4096 DIRECT_MB=8192 CONTAINER_MB="" CPUS="" NAME=""
 JAVA_OPTS="" GC_LOG=0
 RECREATE=0 DRY_RUN=0 ACCEPT_EULA=0 REBUILD_IMAGE=0 ROWS="" ALLOW_SHARED=0 ALLOW_OVERCOMMIT=0
@@ -137,7 +138,7 @@ validate_settings() {
         [[ -z $DOCKER_CONFIG_FILE || -f $DOCKER_CONFIG_FILE ]] || die "docker config not found: $DOCKER_CONFIG_FILE"
     else
         [[ -z $DOCKER_CONFIG_FILE ]] || die "--docker-config needs --java-image"
-        JAVA_VERSION=${JAVA_VERSION:-17}
+        JAVA_VERSION=${JAVA_VERSION:-$DEFAULT_JAVA_VERSION}
         [[ $JAVA_VERSION =~ ^[0-9]+$ ]] || die "JAVA_VERSION must be a positive integer"
     fi
     for v in HEAP_MB DIRECT_MB; do
