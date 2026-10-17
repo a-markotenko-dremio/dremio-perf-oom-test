@@ -5,8 +5,11 @@
 
 Combinations: every Dremio package x every Java image (by default Dremio 26.1.8 and 26.1.10 x
 eclipse-temurin:21-jdk and wolfi-jdk:21 = 4), each in its own container of --container-mb with
---direct-mb of direct memory and --cpus CPUs. All combinations walk the heap sizes together: at every
-heap size each of them does its step, one after the other, so that the chart grows for all at once.
+--direct-mb of direct memory and --cpus CPUs. All combinations walk the heap sizes together. At every heap
+size they take turns, one run each: first until every combination has a PASS and a FAIL (the middle of them
+is already written to oom_ranges.csv as a ROUGH result), then, again one run each, until every one has
+reached --precision (a combination that has is skipped). Then the next heap size follows. Every run of
+a combination is made in a new container, because the next run is of another combination.
 
 The heap grows from --heap-start by --heap-step (512, 576, 640, ... MB) until it reaches the memory
 of the container (container - direct - --reserve-mb) or, for a combination, until the test passes
@@ -22,7 +25,7 @@ another combination at this heap size (the first of them goes there at most), an
 does not run below a PASS of another combination inside it (the run goes to that PASS). A PASS moves the search
 up, a FAIL down, by --window (the step is wider when the frontier moved faster between the last heap
 sizes) and doubling, until the frontier is bracketed, then the bracket is halved down to --precision. Without
-any recorded run the first step searches --rows-low..--rows-high by halving. The result of a step is the
+any recorded run the first run is the middle of --rows-low..--rows-high and the search goes halfway to the limits. The result of a step is the
 range [highest PASS, lowest FAIL] and its middle, "Mean rows".
 
 A run counts as FAIL only when it died with a Java heap OOM ("Heap monitor detected that the heap is almost
@@ -35,7 +38,7 @@ the script stops: the environment is probably broken.
 Files (resumable: what is recorded is not run again; --retry-errors runs ERROR runs again):
   data/oom_runs.csv    every run of the search with its outcome (PASS | FAIL | ERROR): the only recorded data
   data/oom_ranges.csv  the finished steps, for the chart (report.lines): Dremio ver, Java image, Heap MB, Pass max
-                       rows, Fail min rows, Mean rows, Status (RANGE | ALL_PASS | ALL_FAIL). Written again from
+                       rows, Fail min rows, Mean rows, Status (RANGE | ROUGH, a bracket wider than the precision | ALL_PASS | ALL_FAIL). Written again from
                        oom_runs.csv at the start and after every run, never read: edit oom_runs.csv, not this file
   data/test_results.csv  the usual row of every test run (REPORT_CSV)
 Disk: the storage of a combination (<storage-root>/<container name>: the test tables and, after a failed run, a
@@ -49,7 +52,7 @@ import os
 import sys
 
 import defaults
-from .model import Combo
+from .model import Combo, Result
 from .runner import Runner, container_cli, list_containers, remove_storage, stale_storage_dirs
 from .search import heap_sizes
 from .state import State
@@ -127,7 +130,7 @@ def main(argv=None):
           f"container {args.container_mb} MB, direct {args.direct_mb} MB, {args.cpus} CPUs, "
           f"rows {args.rows_low}M..{args.rows_high}M, precision {args.precision}M, first step {args.window}M")
     for combo in combos:
-        recorded = sum(1 for h in heaps if state.step(combo, h))
+        recorded = sum(1 for h in heaps if (state.step(combo, h) or Result("ROUGH")).done)
         print(f"  {combo.version:<12} {combo.image:<24} {recorded}/{len(heaps)} steps recorded")
     if args.clean_stale:
         clean_stale(args)

@@ -86,7 +86,7 @@ def test_all_combinations_do_each_heap_size_together(tmp_path):
         sorted((c.version, c.image, str(h)) for c in combos for h in (512, 576, 640, 704, 768))
     heaps_in_run_order = [h for _, h in dict.fromkeys(order)]
     assert heaps_in_run_order == sorted(heaps_in_run_order)      # heap by heap
-    assert len(deleted) == 5 * 4                    # the container of every step is deleted when the step is done
+    assert len(deleted) == len(order)               # the container of every run is deleted when the run is done: one at a time
 
 
 def test_a_combination_that_only_passes_drops_out_the_others_go_on(tmp_path):
@@ -173,3 +173,43 @@ def test_the_real_case_after_a_fail_at_678_the_next_run_is_the_sibling_pass_658(
     sp.run_all(args, [old, new],
               lambda c: runner, state, log=lambda *a: None)
     assert runner.rows == [658]
+
+
+def brackets_over_time(runs_rows):
+    """For every recorded run: did its combination already have both a PASS and a FAIL when the run was made?"""
+    seen, out = {}, []
+    for r in runs_rows:
+        key = (r["Dremio ver"], r["Java image"])
+        out.append({m.PASS, m.FAIL} <= seen.setdefault(key, set()))
+        seen[key].add(r["Outcome"])
+    return out
+
+
+def test_every_combination_gets_a_pass_and_a_fail_before_any_of_them_is_refined(tmp_path):
+    args = make_args(tmp_path, heap_max=512)
+    combos = combos4()
+    limits = {combos[0]: 300, combos[1]: 650, combos[2]: 120, combos[3]: 900}
+    sp.run_all(args, combos, FakeFleet(lambda c, heap: limits[c], [], []), make_state(tmp_path, args), log=lambda *a: None)
+    runs = read(tmp_path / "runs.csv")
+    refined = brackets_over_time(runs)
+    first_refined = refined.index(True)
+    complete = {}
+    for r in runs[:first_refined]:
+        complete.setdefault((r["Dremio ver"], r["Java image"]), set()).add(r["Outcome"])
+    assert len(complete) == 4 and all(v == {m.PASS, m.FAIL} for v in complete.values())   # nobody is still without a bracket
+
+
+def test_the_refining_runs_take_turns_and_a_combination_at_its_precision_is_skipped(tmp_path):
+    args = make_args(tmp_path, heap_max=512)
+    combos = combos4()[:2]
+    limits = {combos[0]: 300, combos[1]: 650}
+    sp.run_all(args, combos, FakeFleet(lambda c, heap: limits[c], [], []), make_state(tmp_path, args), log=lambda *a: None)
+    runs = read(tmp_path / "runs.csv")
+    refining = [r["Java image"] for r, bracketed in zip(runs, brackets_over_time(runs)) if bracketed]
+    assert refining[:4] == ["a", "b", "a", "b"]                      # one run each, in turn
+    assert refining.count("a") + refining.count("b") == len(refining)
+    last = runs[-1]["Java image"]
+    assert refining[-1] == last
+    finished_at = {c: max(i for i, x in enumerate(runs) if x["Java image"] == c) for c in "ab"}
+    assert min(finished_at.values()) < max(finished_at.values())      # one finished and was skipped while the other went on
+    assert all(r["Status"] == "RANGE" for r in read(tmp_path / "ranges.csv"))

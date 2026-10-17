@@ -30,15 +30,15 @@ def test_estimates_use_the_runs_of_the_smaller_heap_sizes_only():
 def test_first_run_of_a_new_combination_is_near_the_result_of_another(tmp_path):
     """Heap 576 of 26.1.8 / wolfi-jdk:21 has PASS at 578, 658, 678 and FAIL at 698: the bracket is [678, 698], its middle 688.
     26.1.10 / eclipse-temurin:21-jdk has no runs of its own at heap 576: its first run goes to 688M."""
-    state = sibling_state(tmp_path, [(*SIB, 576, r, o) for r, o in ((578, PASS), (658, PASS), (698, FAIL), (678, PASS))])
+    args = make_args(tmp_path, heap_start=576, heap_max=576, window=10, precision=20)
+    state = sibling_state(tmp_path, [(*SIB, 576, r, o) for r, o in ((578, PASS), (658, PASS), (698, FAIL), (678, PASS))], args)
     old, new = package_combo(*SIB), package_combo(*OWN)
     assert p.bracket(state.heap_runs(old)[576]) == (678, 698)
-    assert p.first_guess(make_args(tmp_path, window=10), state, new, [old], 576) == (688, 10)
+    assert p.first_guess(args, state, new, [old], 576) == (688, 10)
 
     runner = FakeRunner(lambda heap: 690)                                  # the new combination fails from 690M
     # the bracket of the old one is 20M wide, so with precision 20 its step needs no run and the first run is the new one's
-    sp.run_all(make_args(tmp_path, heap_start=576, heap_max=576, window=10, precision=20), [old, new],
-               lambda c: runner, state, log=lambda *a: None)
+    sp.run_all(args, [old, new], lambda c: runner, state, log=lambda *a: None)
     assert runner.rows[0] == 688                                           # the first measured value
 
 

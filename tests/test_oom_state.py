@@ -54,16 +54,31 @@ def test_a_deleted_ranges_file_is_regenerated_and_an_edited_runs_file_changes_it
 
 def test_a_step_is_finished_by_the_precision_of_the_search(tmp_path):
     own, runs = package_combo(*OWN), [(*OWN, 512, 100, "PASS"), (*OWN, 512, 130, "FAIL")]
-    assert sibling_state(tmp_path, runs, make_args(tmp_path, precision=20)).step(own, 512) is None
-    assert sibling_state(tmp_path, runs, make_args(tmp_path, precision=30)).step(own, 512).mean == 115
+    assert sibling_state(tmp_path, runs, make_args(tmp_path, precision=20)).step(own, 512).status == "ROUGH"
+    assert sibling_state(tmp_path, runs, make_args(tmp_path, precision=30)).step(own, 512).status == "RANGE"
 
 
 def test_step_result_of_the_runs():
     rows = lambda *pairs: dict(pairs)
     assert se.step_result(rows((100, m.PASS), (110, m.FAIL)), 10, 10, 1440) == m.Result("RANGE", 100, 110)
-    assert se.step_result(rows((100, m.PASS), (130, m.FAIL)), 10, 10, 1440) is None
+    assert se.step_result(rows((100, m.PASS), (130, m.FAIL)), 10, 10, 1440) == m.Result("ROUGH", 100, 130)
     assert se.step_result(rows((1440, m.PASS), (700, m.PASS)), 10, 10, 1440) == m.Result("ALL_PASS", pass_max=1440)
     assert se.step_result(rows((700, m.PASS)), 10, 10, 1440) is None
     assert se.step_result(rows((10, m.FAIL), (50, m.FAIL)), 10, 10, 1440) == m.Result("ALL_FAIL", fail_min=10)
     assert se.step_result(rows((50, m.FAIL)), 10, 10, 1440) is None
-    assert se.step_result(rows((100, m.PASS), (120, m.FAIL), (150, m.PASS)), 10, 10, 1440) is None   # a PASS above the FAIL is ignored
+    assert se.step_result(rows((100, m.PASS), (120, m.FAIL), (150, m.PASS)), 10, 10, 1440) == m.Result("ROUGH", 100, 120)   # a PASS above the FAIL is ignored
+
+
+def test_a_preliminary_result_is_written_as_soon_as_a_pass_and_a_fail_are_known(tmp_path):
+    state = make_state(tmp_path)
+    state.add_run(combo(), 512, 100, m.PASS)
+    state.add_run(combo(), 512, 300, m.FAIL)
+    row = read(tmp_path / "ranges.csv")[0]
+    assert (row["Pass max rows"], row["Fail min rows"], row["Mean rows"], row["Status"]) == ("100M", "300M", "200M", "ROUGH")
+    state.add_run(combo(), 512, 200, m.PASS)
+    state.add_run(combo(), 512, 250, m.PASS)
+    state.add_run(combo(), 512, 280, m.FAIL)
+    state.add_run(combo(), 512, 265, m.FAIL)
+    state.add_run(combo(), 512, 255, m.PASS)
+    rows = read(tmp_path / "ranges.csv")
+    assert len(rows) == 1 and (rows[0]["Mean rows"], rows[0]["Status"]) == ("260M", "RANGE")

@@ -1,87 +1,92 @@
-"""The walk over the heap sizes: for every combination a step, which is a search whose runs are made by a runner."""
-from .model import ERROR, FAIL, PASS, StepSkipped
+"""The walk over the heap sizes. At every heap size the combinations take turns, one run each: first until every one has
+a PASS and a FAIL (a preliminary result), then, still one run each, until every one has reached the precision."""
+from .model import ERROR, FAIL, PASS
 from .predict import bracket, first_guess, sibling_fail_cap, sibling_passes
-from .search import heap_sizes, search, search_guided
+from .search import heap_sizes, next_rows
 
 
 class Progress:
     """Where the walk over the heap sizes stands for one combination."""
 
     def __init__(self):
-        self.skipped = 0         # heap steps skipped in a row
+        self.skipped = 0         # heap sizes skipped in a row
         self.finished = False    # nothing fails any more: larger heaps pass too
 
 
-def run_step(args, combo, heap, runner, state, progress, log=print, others=()):
-    """The step of a combination at one heap size. `runner.run(heap, rows_m) -> PASS | FAIL | ERROR`."""
-    done = state.step(combo, heap)
-    if done:
-        log(f"### {combo.version} {combo.image} heap={heap}: recorded ({done.status}, mean "
-            f"{'-' if done.mean is None else f'{done.mean:g}M'})")
-        progress.finished = done.status == "ALL_PASS"
-        return
-    lo, hi = bracket(state.heap_runs(combo).get(heap, {}))
+def plan_run(args, state, combo, others, heap):
+    """(row count of the next run of a combination at a heap size, what the choice is based on); the row count is None
+    when the step is finished."""
     notes = []
     guess = first_guess(args, state, combo, others, heap, notes)
     cap = sibling_fail_cap(state, others, heap)
+    outcomes = state.heap_runs(combo).get(heap, {})
+    lo, hi = bracket(outcomes)
     if cap is not None and (lo is None or cap > lo):
         notes.append(f"runs upwards stop at {cap}M, where another combination failed")
-    start, step = guess if guess else (None, args.window)
-    if lo is not None or hi is not None:
-        log(f"### {combo.version} {combo.image} heap={heap}: recorded runs give PASS up to {lo or '-'}M, FAIL from {hi or '-'}M"
-            + (f"; guess {start}M, step {step}M ({'; '.join(notes)})" if guess else ""))
-    elif guess:
-        log(f"### {combo.version} {combo.image} heap={heap}: first run at {start}M, step {step}M ({'; '.join(notes)})")
-    else:
-        log(f"### {combo.version} {combo.image} heap={heap}: nothing recorded, searching {args.rows_low}M..{args.rows_high}M")
+    start, step = guess if guess else (None, None)
+    rows_m = next_rows(outcomes, start, step, args.precision, args.rows_low, args.rows_high, cap,
+                       sibling_passes(state, others, heap))
+    return rows_m, f"PASS up to {lo or '-'}M, FAIL from {hi or '-'}M" + (f"; {'; '.join(notes)}" if notes else "")
 
-    def run(rows_m):
-        known = state.run_outcome(combo, heap, rows_m)
-        if known in (PASS, FAIL) or (known == ERROR and not args.retry_errors):
-            outcome = known
-            log(f"    {rows_m}M: recorded {outcome}")
-        else:
-            outcome = runner.run(heap, rows_m)
-            state.add_run(combo, heap, rows_m, outcome)
-            log(f"    {rows_m}M: {outcome}")
-        if outcome == ERROR:
-            raise StepSkipped(f"{rows_m}M")
-        return outcome
 
-    try:
-        if lo is None and hi is None and not guess:
-            result = search(run, args.rows_low, args.rows_high, args.precision, args.rows_low, args.rows_high)
-        else:
-            result = search_guided(run, lo, hi, start, step, args.precision, args.rows_low, args.rows_high, cap,
-                                   sibling_passes(state, others, heap))
-    except StepSkipped as e:
-        progress.skipped += 1
-        log(f"    heap={heap} skipped: the run at {e} ended with an error that is not a heap OOM "
-            f"({progress.skipped} in a row)")
-        if progress.skipped >= args.max_skipped:
-            raise SystemExit(f"{progress.skipped} heap steps in a row skipped: stopping, check the environment")
-        return
-    progress.skipped = 0
-    log(f"    heap={heap}: {result.status}" + (f", PASS up to {result.pass_max}M, FAIL from {result.fail_min}M, "
-                                              f"mean {result.mean:g}M" if result.status == "RANGE" else ""))
-    if result.status == "ALL_PASS":
-        log("    no failure at the highest row count: a larger heap passes too, this combination is done")
-        progress.finished = True
+def run_once(args, combo, heap, rows_m, runner, state, log):
+    """One run (or the recorded outcome of it); the outcome."""
+    known = state.run_outcome(combo, heap, rows_m)
+    if known in (PASS, FAIL) or (known == ERROR and not args.retry_errors):
+        log(f"    {rows_m}M: recorded {known}")
+        return known
+    outcome = runner.run(heap, rows_m)
+    state.add_run(combo, heap, rows_m, outcome)
+    log(f"    {rows_m}M: {outcome}")
+    return outcome
+
+
+def runs_to_do(state, combos, heap):
+    """The combinations that take the next turn at a heap size: those without a PASS and a FAIL yet, and when there are
+    none, those whose bracket is wider than the precision."""
+    steps = {c: state.step(c, heap) for c in combos}
+    return [c for c in combos if steps[c] is None] or [c for c in combos if steps[c] is not None and not steps[c].done]
 
 
 def run_all(args, combos, runner_for, state, log=print):
-    """Walks the heap sizes of all combinations together: at every heap size each combination does its step, so
-    all the lines of the chart grow at the same time. The container of a step is deleted when the step is done
-    (the next heap size needs a new one anyway), so only one container exists at a time."""
+    """Walks the heap sizes of all combinations together. The container of a run is deleted when the run is done (the next
+    run is mostly of another combination), so only one container exists at a time."""
     progress = {c: Progress() for c in combos}
     for heap in heap_sizes(args.heap_start, args.heap_step, args.heap_max):
+        skipped = set()                                 # combinations with a run that ended in an error at this heap size
+        while True:
+            turn = runs_to_do(state, [c for c in combos if not progress[c].finished and c not in skipped], heap)
+            planned = [(c, plan_run(args, state, c, [x for x in combos if x != c], heap)) for c in turn]
+            if not any(rows_m is not None for _, (rows_m, _) in planned):
+                break
+            for combo, _ in planned:
+                rows_m, why = plan_run(args, state, combo, [c for c in combos if c != combo], heap)   # after the turns before it
+                if rows_m is None:
+                    continue
+                log(f"### {combo.version} {combo.image} heap={heap}: run at {rows_m}M ({why})")
+                runner = runner_for(combo)
+                try:
+                    outcome = run_once(args, combo, heap, rows_m, runner, state, log)
+                finally:
+                    getattr(runner, "delete", lambda: None)()
+                if outcome == ERROR:
+                    skipped.add(combo)
+                    progress[combo].skipped += 1
+                    log(f"    heap={heap} skipped: the run at {rows_m}M ended with an error that is not a heap OOM "
+                        f"({progress[combo].skipped} in a row)")
+                    if progress[combo].skipped >= args.max_skipped:
+                        raise SystemExit(f"{progress[combo].skipped} heap steps in a row skipped: stopping, check the environment")
+                    continue
+                result = state.step(combo, heap)
+                if result is not None and result.status == "ALL_PASS":
+                    log("    no failure at the highest row count: a larger heap passes too, this combination is done")
+                    progress[combo].finished = True
         for combo in combos:
-            if progress[combo].finished:
-                continue
-            runner = runner_for(combo)
-            try:
-                run_step(args, combo, heap, runner, state, progress[combo], log, others=[c for c in combos if c != combo])
-            finally:
-                getattr(runner, "delete", lambda: None)()
+            result = state.step(combo, heap)
+            if combo not in skipped and result is not None:
+                progress[combo].skipped = 0
+                log(f"### {combo.version} {combo.image} heap={heap}: {result.status}" + (
+                    f", PASS up to {result.pass_max}M, FAIL from {result.fail_min}M, mean {result.mean:g}M"
+                    if result.mean is not None else ""))
         if all(p.finished for p in progress.values()):
             return

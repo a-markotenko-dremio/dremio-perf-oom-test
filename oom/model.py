@@ -7,15 +7,17 @@ from report.runs import short_version
 PASS, FAIL, ERROR = "PASS", "FAIL", "ERROR"
 
 
-class StepSkipped(Exception):
-    """A run ended in neither PASS nor a heap OOM: this heap step gives no result."""
-
-
 @dataclass
 class Result:
-    status: str                  # RANGE | ALL_PASS (no failure up to the highest row count) | ALL_FAIL (fails at the lowest)
+    status: str                  # RANGE | ROUGH (a bracket wider than the precision) | ALL_PASS (no failure up to the highest
+                                 # row count) | ALL_FAIL (fails at the lowest)
     pass_max: int | None = None  # millions of rows
     fail_min: int | None = None
+
+    @property
+    def done(self):
+        """False while the step wants more runs to reach the precision."""
+        return self.status != "ROUGH"
 
     @property
     def mean(self):

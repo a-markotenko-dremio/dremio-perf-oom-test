@@ -36,7 +36,8 @@ class State:
         return self.runs.get((combo.version, combo.image, heap, rows_m))
 
     def step(self, combo, heap):
-        """The Result of the step of a combination at a heap size when its runs have found the frontier, else None."""
+        """The Result of the step of a combination at a heap size from its runs (ROUGH while the bracket is wider than the
+        precision), None while there is no PASS and no FAIL."""
         outcomes = self.heap_runs(combo).get(heap)
         return outcomes and step_result(outcomes, self.args.precision, self.args.rows_low, self.args.rows_high)
 
