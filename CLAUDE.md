@@ -11,7 +11,7 @@ Run the tests (offline, no Dremio needed): `.venv/bin/python -m pytest tests`
 
 ## DRY: one source of truth
 
-- Before writing code, search the repository for what already exists: `scripts/lib/*.sh`, `results_report.py`, `settings.py`, `report/canvas.py`, `report/scatter.py`, `oom_ranges.py`. If it exists, use it. If something similar exists, generalize it and use it in both places instead of copying.
+- Before writing code, search the repository for what already exists: `scripts/lib/*.sh`, `results_report.py`, `settings.py`, `report/canvas.py`, `quantities.py`, `csvio.py`, `defaults.py`, `oom/`. If it exists, use it. If something similar exists, generalize it and use it in both places instead of copying.
 - Logic is not duplicated between bash and Python, between scripts and modules, or between tests and code. Shared logic goes to `scripts/lib/` (shell) or a module of a package (Python).
 - Parsing and formatting of quantities (K/M/G, rows, MB), rounding, the container name and IP, paths (`/mnt/ubuntu-var/dremio`) and defaults (heap, direct memory, CPUs) are defined in exactly one place. A new copy of such logic is a defect.
 - A new default, flag or CSV column is added in one place, and `--help`, the docstring, the `Makefile` and the tests are updated in the same change.

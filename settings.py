@@ -28,7 +28,7 @@ DREMIO_URL = os.environ.get("DREMIO_URL", "http://localhost:9047").rstrip("/")
 TIMEOUT = int(os.environ.get("DREMIO_TIMEOUT", "3600"))
 ROW_COUNT = results_report.parse_rows(os.environ.get("ROW_COUNT", "100000"))
 MAX_ROW_COUNT = 2**31 - 1  # ids are generated as INT in generate_data.py
-DATA_DIR = Path(__file__).parent / "data"  # the SQL files and the result CSVs
+DATA_DIR = defaults.DATA_DIR
 REPORT_CSV = Path(os.environ.get("REPORT_CSV", DATA_DIR / "test_results.csv"))
 
 STORAGE_PATH = Path(os.environ.get("STORAGE_PATH", defaults.STORAGE_ROOT))
