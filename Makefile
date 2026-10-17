@@ -36,18 +36,16 @@ test-container: $(VENV)/.installed
 #   make create-container PACKAGE=~/dremio-community-26.0.0.tar.gz JAVA=21 HEAP_MB=8192 DIRECT_MB=16384 CPUS=4
 # Optional: NAME, CONTAINER_MB, INPUT, IMAGE, RECREATE=1 (delete an existing container first),
 #   JAVA_OPTS="-XX:..." (extra JVM options of Dremio), GC_LOG=1 (GC log in /opt/dremio/log/gc.log),
-#   JAVA=N (OpenJDK major version; default: see DEFAULT_JAVA_VERSION in deploy_dremio.sh),
+#   HEAP_MB, DIRECT_MB, JAVA=N (OpenJDK major version): the defaults are those of deploy_dremio.sh,
 #   JAVA_IMAGE=cgr.dev/chainguard/jdk:latest-dev (run Dremio in Docker with the Java of this image instead of JAVA),
 #     or JAVA_IMAGE=wolfi-jdk:21 (built in the container on cgr.dev/chainguard/wolfi-base with OpenJDK 21),
 #   DOCKER_CONFIG=~/.docker/config.json (registry credentials for such an image),
 #   OVERCOMMIT=1 (allow a container memory limit above the memory of the host).
 # STORAGE_PATH defaults to the one used by `make data`; the EULA is accepted (--accept-eula).
-HEAP_MB ?= 4096
-DIRECT_MB ?= 8192
 create-container:
 	@test -n "$(PACKAGE)" || { echo "usage: make create-container PACKAGE=<dremio-*.tar.gz> [STORAGE_PATH=DIR] [JAVA=N] [HEAP_MB=N] [DIRECT_MB=N] [CONTAINER_MB=N] [CPUS=N] [NAME=NAME] [INPUT=PATH|URL] [JAVA_IMAGE=IMAGE] [DOCKER_CONFIG=FILE] [JAVA_OPTS=OPTS] [GC_LOG=1] [RECREATE=1] [OVERCOMMIT=1]" >&2; exit 2; }
 	./deploy_dremio.sh --package "$(PACKAGE)" --storage-path "$(STORAGE_PATH)" $(if $(JAVA_IMAGE),--java-image "$(JAVA_IMAGE)",$(if $(JAVA),--java-version "$(JAVA)")) \
-		--heap-memory-mb "$(HEAP_MB)" --direct-memory-mb "$(DIRECT_MB)" --accept-eula \
+		$(if $(HEAP_MB),--heap-memory-mb "$(HEAP_MB)") $(if $(DIRECT_MB),--direct-memory-mb "$(DIRECT_MB)") --accept-eula \
 		$(if $(CONTAINER_MB),--container-memory-mb "$(CONTAINER_MB)") $(if $(CPUS),--cpus "$(CPUS)") \
 		$(if $(NAME),--name "$(NAME)") $(if $(INPUT),--input "$(INPUT)") $(if $(IMAGE),--image "$(IMAGE)") \
 		$(if $(JAVA_OPTS),--java-opts "$(JAVA_OPTS)") $(if $(GC_LOG),--gc-log) $(if $(DOCKER_CONFIG),--docker-config "$(DOCKER_CONFIG)") \
