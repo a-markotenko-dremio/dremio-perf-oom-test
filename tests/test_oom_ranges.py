@@ -238,3 +238,13 @@ def test_a_combination_that_only_passes_drops_out_the_others_go_on(tmp_path):
         per_combo.setdefault((r["Dremio ver"], r["Java image"]), []).append(r["Heap MB"])
     key = lambda c: (c.version, c.image)
     assert per_combo[key(combos[0])] == ["512", "576"] and len(per_combo[key(combos[1])]) == 5
+
+
+def test_a_combination_without_a_result_starts_in_a_window_around_another_ones(tmp_path):
+    state = o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    combos = combos4()[:2]
+    o.run_all(make_args(tmp_path, heap_max=512), combos, FakeFleet(lambda c, heap: 300 + heap, [], []), state, log=lambda *a: None)
+    runs = read(tmp_path / "runs.csv")
+    first = [int(r["Rows"]) for r in runs if r["Java image"] == combos[0].image and r["Dremio ver"] == combos[0].version]
+    second = [int(r["Rows"]) for r in runs if r["Java image"] == combos[1].image and r["Dremio ver"] == combos[1].version]
+    assert first[0] == 725 and abs(second[0] - 812) <= 150

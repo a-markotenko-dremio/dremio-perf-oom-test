@@ -13,7 +13,8 @@ of the container (container - direct - --reserve-mb) or, for a combination, unti
 at the highest row count (--rows-high): a larger heap would pass too. At every heap size a binary
 search over the row count finds the pass/fail frontier: a run that PASSes moves the lower end up,
 a run that FAILs moves the upper end down, until they are --precision apart. The first step searches
---rows-low..--rows-high, the next ones a window of ±--window around the previous result (the
+--rows-low..--rows-high, the next ones (also the first step of a combination when another one already
+has a result) a window of ±--window around the previous result (the
 frontier moves slowly while the heap grows by 64 MB); the window moves on when the frontier is
 outside it. The result of a step is the range [highest PASS, lowest FAIL] and its middle, "Mean rows".
 
@@ -254,6 +255,8 @@ def run_all(args, combos, runner_for, state, log=print):
         for combo in combos:
             if progress[combo].finished:
                 continue
+            if progress[combo].center is None:      # no result of its own yet: start near another combination's
+                progress[combo].center = next((p.center for p in progress.values() if p.center is not None), None)
             runner = runner_for(combo)
             try:
                 run_step(args, combo, heap, runner, state, progress[combo], log)
