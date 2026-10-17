@@ -1,7 +1,6 @@
 """The real runs: deploys the container of a combination, runs the test in it and tells a heap OOM from other failures."""
 import os
 import re
-import shutil
 import subprocess
 import time
 
@@ -15,18 +14,24 @@ HEAP_OOM = re.compile(r"OutOfHeapMemoryException|Heap monitor detected that the 
                       r"|OutOfMemoryError: (Java heap space|GC overhead limit exceeded)")
 
 
+def common_sh(script, *args):
+    """Runs a snippet of bash after sourcing scripts/lib/common.sh (the one place that knows the container CLI and the
+    container names) and returns its output; `args` are $1, $2, ... of the snippet."""
+    r = subprocess.run(["bash", "-c", f"source scripts/lib/common.sh; {script}", "_", *args], cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SystemExit(r.stderr.strip() or f"shell snippet failed: {script}")
+    return r.stdout.strip()
+
+
 def container_cli():
-    for cli in ("incus", "lxc"):
-        if shutil.which(cli):
-            return cli
-    raise SystemExit("neither incus nor lxc found in PATH")
+    """The container CLI of the shell scripts, incus or lxc."""
+    return common_sh('detect_container_cli; echo "$CT"')
 
 
 def container_name(combo, args):
-    """The name deploy_dremio.sh builds by default (the same shell function)."""
-    script = 'source scripts/lib/common.sh; JAVA_IMAGE=$1; default_container_name "$2" "$(java_label)" "$3" "$4"'
-    return subprocess.run(["bash", "-c", script, "_", combo.image, combo.package, str(args.container_mb), str(args.cpus)],
-                          cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+    """The name deploy_dremio.sh builds by default."""
+    return common_sh('JAVA_IMAGE=$1; default_container_name "$2" "$(java_label)" "$3" "$4"',
+                     combo.image, combo.package, str(args.container_mb), str(args.cpus))
 
 
 class Runner:

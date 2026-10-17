@@ -11,11 +11,11 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib/common.sh"
 cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.."
 
 CONTAINER=${1:-}
+NAME=$CONTAINER   # cx (scripts/lib/common.sh) runs in the container NAME
 [[ -n $CONTAINER ]] || { echo "usage: make test-container CONTAINER=<name> [ROW_COUNT=N] [STORAGE_PATH=DIR]" >&2; exit 2; }
 PYTHON=${PYTHON:-.venv/bin/python}
 ROW_COUNT=${ROW_COUNT:-100000}
 detect_container_cli
-cx() { $CT exec "$CONTAINER" -- "$@"; }
 
 IP=$(container_ip || true)
 [[ -n $IP ]] || die "cannot get the IP of container $CONTAINER (is it running?)"
@@ -34,7 +34,7 @@ if cx test -x "$JAVA_BIN" 2>/dev/null; then
     JAVA_OUT=$(cx "$JAVA_BIN" -version 2>&1 || true)
 else
     JAVA_IMAGE=$(cx docker inspect --format '{{.Config.Image}}' dremio 2>/dev/null || true)
-    JAVA_OUT=$(cx docker run --rm --security-opt apparmor=unconfined --entrypoint "$JAVA_BIN" "$JAVA_IMAGE" -version 2>&1 || true)
+    JAVA_OUT=$(cx_docker_run --rm --entrypoint "$JAVA_BIN" "$JAVA_IMAGE" -version 2>&1 || true)
 fi
 JVM_VERSION=$(sed -n 's/.*Runtime Environment.*(build \(.*\))/\1/p' <<<"$JAVA_OUT")
 

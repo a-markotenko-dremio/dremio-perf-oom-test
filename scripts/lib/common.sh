@@ -10,6 +10,15 @@ detect_container_cli() {
     else die "neither incus nor lxc found in PATH"; fi
 }
 
+# Runs a command in the container NAME.
+cx() { $CT exec "$NAME" -- "$@"; }
+
+# Docker inside the container cannot read the AppArmor profiles of the host (runc fails on the check), so the
+# containers it runs are started without a profile.
+DOCKER_SECURITY_OPT=apparmor=unconfined
+# Runs a Docker container inside the container NAME; the arguments are those of `docker run`.
+cx_docker_run() { cx docker run --security-opt "$DOCKER_SECURITY_OPT" "$@"; }
+
 # The Java of a deployment as a name part: the repository and tag of --java-image (lower case, other
 # characters to hyphens), e.g. wolfi-jdk:21 -> wolfi-jdk-21, cgr.dev/chainguard/jdk:latest-dev -> jdk-latest-dev;
 # else the Java version.
