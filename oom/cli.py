@@ -37,6 +37,10 @@ Files (resumable: what is recorded is not run again; --retry-errors runs ERROR r
                        Fail min rows, Mean rows, Status (RANGE | ALL_PASS | ALL_FAIL)
   data/oom_runs.csv    every run of the search with its outcome (PASS | FAIL | ERROR)
   data/test_results.csv  the usual row of every test run (REPORT_CSV)
+Disk: the storage of a combination (<storage-root>/<container name>: the test tables and, after a failed run, a
+half-written output table of tens of GB) is deleted together with its container before every deployment and
+when a step is done. The shared data blocks (<storage-root>/blocks) are never touched. --clean-stale also deletes the
+storages of containers that do not exist any more (left by runs that were killed).
 Run with PLAN=1 or --plan to see the combinations, the heap sizes and what is already recorded.
 """
 import argparse
@@ -45,7 +49,7 @@ import sys
 
 import defaults
 from .model import Combo
-from .runner import Runner
+from .runner import Runner, container_cli, list_containers, remove_storage, stale_storage_dirs
 from .search import heap_sizes
 from .state import State
 from .steps import run_all
@@ -80,6 +84,9 @@ def parse_args(argv=None):
     ap.add_argument("--storage-root", default=str(defaults.STORAGE_ROOT), help="a combination stores its data in <root>/<container name>")
     ap.add_argument("--ranges-csv", default=str(defaults.DATA_DIR / "oom_ranges.csv"))
     ap.add_argument("--runs-csv", default=str(defaults.DATA_DIR / "oom_runs.csv"))
+    ap.add_argument("--clean-stale", action="store_true",
+                    help="first delete the storages <storage-root>/d<version>-...-<N>G-<N>cpu of containers that do not exist any more "
+                         "(with --plan: only list them)")
     ap.add_argument("--plan", action="store_true", help="only print what would run")
     args = ap.parse_args(argv)
     if os.environ.get("PLAN"):
@@ -98,6 +105,18 @@ def parse_args(argv=None):
     return args
 
 
+def clean_stale(args):
+    """Deletes (with --plan: lists) the storages of containers that do not exist any more, the leftovers of runs that were
+    killed. Only directories named like a container of this script are touched, never Downloads or the shared blocks."""
+    stale = stale_storage_dirs(args.storage_root, list_containers(container_cli()))
+    for name in stale:
+        print(f"{'would delete' if args.plan else 'deleting'} the storage {args.storage_root}/{name}")
+        if not args.plan:
+            remove_storage(args.storage_root, name, keep=os.environ.get("BLOCKS_DIR"))
+    if not stale:
+        print(f"no stale storages in {args.storage_root}")
+
+
 def main(argv=None):
     args = parse_args(argv)
     combos = [Combo(p, i) for p in args.packages for i in args.java_images]
@@ -109,6 +128,8 @@ def main(argv=None):
     for combo in combos:
         recorded = sum(1 for h in heaps if state.step(combo, h))
         print(f"  {combo.version:<12} {combo.image:<24} {recorded}/{len(heaps)} steps recorded")
+    if args.clean_stale:
+        clean_stale(args)
     if args.plan:
         return
     runners = {}
