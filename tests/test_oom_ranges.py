@@ -328,3 +328,56 @@ def test_a_moving_frontier_costs_few_runs_per_step(tmp_path):
     for heap, _ in runner.calls:
         per_heap[heap] = per_heap.get(heap, 0) + 1
     assert all(n <= 6 for h, n in per_heap.items() if h >= 704), per_heap   # once the trend is known
+
+
+RECORDED_RUNS = """Timestamp,Dremio ver,Java image,Heap MB,Rows,Outcome
+2026-10-17_10-02-10,26.1.8,wolfi-jdk:21,576,578,PASS
+2026-10-17_10-07-30,26.1.8,wolfi-jdk:21,576,658,PASS
+2026-10-17_10-11-32,26.1.8,wolfi-jdk:21,576,698,FAIL
+2026-10-17_10-18-07,26.1.8,wolfi-jdk:21,576,678,PASS
+"""
+
+
+def package_combo(version, image):
+    return o.Combo(f"/x/dremio-enterprise-{version}-202605070149260956-31448f13.tar.gz", image)
+
+
+def test_first_run_of_a_new_combination_is_near_the_result_of_another(tmp_path):
+    """Heap 576 of 26.1.8 / wolfi-jdk:21 has PASS at 578, 658, 678 and FAIL at 698: the bracket is [678, 698], its middle 688.
+    26.1.10 / eclipse-temurin:21-jdk has no runs of its own at heap 576: its first run goes to 688M."""
+    (tmp_path / "runs.csv").write_text(RECORDED_RUNS)
+    state = o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    old, new = package_combo("26.1.8", "wolfi-jdk:21"), package_combo("26.1.10", "eclipse-temurin:21-jdk")
+    assert o.bracket(state.heap_runs(old)[576]) == (678, 698)
+    assert o.first_guess(make_args(tmp_path, window=10), state, new, [old], 576) == (688, 10)
+
+    calls = []
+    runner = FakeRunner(lambda heap: 690)                                  # the new combination fails from 690M
+    runner.run = lambda heap, rows, run=runner.run: (calls.append(rows), run(heap, rows))[1]
+    # the bracket of the old one is 20M wide, so with precision 20 its step needs no run and the first run is the new one's
+    o.run_all(make_args(tmp_path, heap_start=576, heap_max=576, window=10, precision=20), [old, new],
+              lambda c: runner, state, log=lambda *a: None)
+    assert calls[0] == 688                                                 # the first measured value
+
+
+def test_a_known_pass_is_followed_by_the_prediction_not_by_a_doubling_step():
+    """Recorded PASS at 428M, 558M; predicted frontier 638M, first step 130M: the next run is 638M. A doubling step from the
+    last PASS would be 558 + 260 = 818M, far above where the frontier is expected."""
+    calls = []
+
+    def run(rows):
+        calls.append(rows)
+        return o.PASS if rows < 690 else o.FAIL
+    r = o.search_guided(run, 558, None, 638, 130, 20, 10, 1440)
+    assert calls[0] == 638 and 818 not in calls and len(calls) <= 5
+    assert r.status == "RANGE" and r.pass_max < 690 <= r.fail_min and r.fail_min - r.pass_max <= 20
+
+
+def test_a_known_fail_is_followed_by_the_prediction_from_below():
+    calls = []
+
+    def run(rows):
+        calls.append(rows)
+        return o.PASS if rows < 300 else o.FAIL
+    r = o.search_guided(run, None, 500, 320, 40, 20, 10, 1440)
+    assert calls[0] == 320 and r.pass_max < 300 <= r.fail_min

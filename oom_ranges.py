@@ -136,12 +136,15 @@ def search(run, lo, hi, precision, floor, ceil):
 
 def search_guided(run, lo, hi, guess, step, precision, floor, ceil):
     """The search of a step that starts from what is known: `lo` is the highest known PASS and `hi` the lowest
-    known FAIL (millions of rows, None when unknown), `guess` where the first run goes when both are unknown.
+    known FAIL (millions of rows, None when unknown), `guess` the predicted frontier where the first run goes.
 
     An unknown end is found by moving from the known one by `step`, doubling it after every run in the same
     direction (PASS up, FAIL down), up to `ceil` / `floor`: ALL_PASS / ALL_FAIL. Then the bracket is halved."""
-    if lo is None and hi is None:
+    if guess is not None:
         guess = min(max(guess, floor), ceil)
+    # the first run is the guess; with an end already known the guess is still the first thing to try on the open side
+    # (a recorded PASS at 558M and a guess of 638M: the next run is 638M, not 558M plus a doubling step)
+    if guess is not None and ((lo is None and hi is None) or (hi is None and guess > lo) or (lo is None and guess < hi)):
         if run(guess) == PASS:
             lo = guess
         else:
