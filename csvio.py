@@ -1,5 +1,6 @@
-"""Reading and appending CSV files: the only place of the project that touches the csv module."""
+"""Reading, appending and writing CSV files: the only place of the project that touches the csv module."""
 import csv
+import os
 from pathlib import Path
 
 
@@ -29,3 +30,16 @@ def append_row(path, columns, row):
         if new:
             w.writeheader()
         w.writerow(row)
+
+
+def write_rows(path, columns, rows):
+    """Replaces the file with the header and `rows` (dicts keyed by `columns`). The new file is complete before it
+    takes the place of the old one, so a reader never sees half of it."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=columns)
+        w.writeheader()
+        w.writerows(rows)
+    os.replace(tmp, path)

@@ -31,3 +31,11 @@ def test_read_table_keeps_columns_with_the_same_name_apart(tmp_path):
     assert csvio.read_table(path) == (["a", "a", "c"], [["1", "2", "3"]])
     path.write_text("")
     assert csvio.read_table(path) == ([], [])
+
+
+def test_write_rows_replaces_the_file_and_leaves_no_temporary_file(tmp_path):
+    path = tmp_path / "sub" / "t.csv"
+    csvio.write_rows(path, ["a", "b"], [{"a": 1, "b": "x,y"}])
+    csvio.write_rows(path, ["a", "b"], [{"a": 2, "b": "z"}])
+    assert csvio.read_rows(path) == [{"a": "2", "b": "z"}]
+    assert [p.name for p in path.parent.iterdir()] == ["t.csv"]

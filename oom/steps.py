@@ -16,8 +16,9 @@ def run_step(args, combo, heap, runner, state, progress, log=print, others=()):
     """The step of a combination at one heap size. `runner.run(heap, rows_m) -> PASS | FAIL | ERROR`."""
     done = state.step(combo, heap)
     if done:
-        log(f"### {combo.version} {combo.image} heap={heap}: recorded ({done['Status']}, mean {done['Mean rows'] or '-'})")
-        progress.finished = done["Status"] == "ALL_PASS"
+        log(f"### {combo.version} {combo.image} heap={heap}: recorded ({done.status}, mean "
+            f"{'-' if done.mean is None else f'{done.mean:g}M'})")
+        progress.finished = done.status == "ALL_PASS"
         return
     lo, hi = bracket(state.heap_runs(combo).get(heap, {}))
     notes = []
@@ -61,7 +62,6 @@ def run_step(args, combo, heap, runner, state, progress, log=print, others=()):
             raise SystemExit(f"{progress.skipped} heap steps in a row skipped: stopping, check the environment")
         return
     progress.skipped = 0
-    state.add_step(combo, heap, result)
     log(f"    heap={heap}: {result.status}" + (f", PASS up to {result.pass_max}M, FAIL from {result.fail_min}M, "
                                               f"mean {result.mean:g}M" if result.status == "RANGE" else ""))
     if result.status == "ALL_PASS":

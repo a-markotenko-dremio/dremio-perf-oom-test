@@ -33,9 +33,10 @@ row for it, the next step goes on from the last successful one. After --max-skip
 the script stops: the environment is probably broken.
 
 Files (resumable: what is recorded is not run again; --retry-errors runs ERROR runs again):
-  data/oom_ranges.csv  one row per finished step: Dremio ver, Java image, Heap MB, Pass max rows,
-                       Fail min rows, Mean rows, Status (RANGE | ALL_PASS | ALL_FAIL)
-  data/oom_runs.csv    every run of the search with its outcome (PASS | FAIL | ERROR)
+  data/oom_runs.csv    every run of the search with its outcome (PASS | FAIL | ERROR): the only recorded data
+  data/oom_ranges.csv  the finished steps, for the chart (report.lines): Dremio ver, Java image, Heap MB, Pass max
+                       rows, Fail min rows, Mean rows, Status (RANGE | ALL_PASS | ALL_FAIL). Written again from
+                       oom_runs.csv at the start and after every run, never read: edit oom_runs.csv, not this file
   data/test_results.csv  the usual row of every test run (REPORT_CSV)
 Disk: the storage of a combination (<storage-root>/<container name>: the test tables and, after a failed run, a
 half-written output table of tens of GB) is deleted together with its container before every deployment and
@@ -82,7 +83,7 @@ def parse_args(argv=None):
     ap.add_argument("--max-skipped", type=int, default=3, help="stop after this many skipped heap steps in a row")
     ap.add_argument("--retry-errors", action="store_true", help="run again the runs recorded as ERROR")
     ap.add_argument("--storage-root", default=str(defaults.STORAGE_ROOT), help="a combination stores its data in <root>/<container name>")
-    ap.add_argument("--ranges-csv", default=str(defaults.DATA_DIR / "oom_ranges.csv"))
+    ap.add_argument("--ranges-csv", default=str(defaults.DATA_DIR / "oom_ranges.csv"), help="output for the chart, written from the runs")
     ap.add_argument("--runs-csv", default=str(defaults.DATA_DIR / "oom_runs.csv"))
     ap.add_argument("--clean-stale", action="store_true",
                     help="first delete the storages <storage-root>/d<version>-...-<N>G-<N>cpu of containers that do not exist any more "
@@ -120,7 +121,7 @@ def clean_stale(args):
 def main(argv=None):
     args = parse_args(argv)
     combos = [Combo(p, i) for p in args.packages for i in args.java_images]
-    state = State(args.ranges_csv, args.runs_csv)
+    state = State(args.ranges_csv, args.runs_csv, args)
     heaps = heap_sizes(args.heap_start, args.heap_step, args.heap_max)
     print(f"{len(combos)} combinations x heap {heaps[0]}..{heaps[-1]} MB step {args.heap_step} ({len(heaps)} steps), "
           f"container {args.container_mb} MB, direct {args.direct_mb} MB, {args.cpus} CPUs, "
@@ -132,6 +133,7 @@ def main(argv=None):
         clean_stale(args)
     if args.plan:
         return
+    state.write_ranges()
     runners = {}
 
     def runner_for(combo):

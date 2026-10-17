@@ -69,11 +69,16 @@ class FakeFleet:
         return self.runners[combo]
 
 
-def sibling_state(tmp_path, rows):
+def make_state(tmp_path, args=None):
+    """A State over tmp_path/ranges.csv and tmp_path/runs.csv; `args` must be those of the search that uses it."""
+    return st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv", args or make_args(tmp_path))
+
+
+def sibling_state(tmp_path, rows, args=None):
     """A State over the recorded runs `rows`: tuples (Dremio ver, Java image, heap, rows in millions, outcome)."""
     lines = ["Timestamp,Dremio ver,Java image,Heap MB,Rows,Outcome"] + [f"t,{v},{i},{h},{r},{o}" for v, i, h, r, o in rows]
     (tmp_path / "runs.csv").write_text("\n".join(lines) + "\n")
-    return st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    return make_state(tmp_path, args)
 
 
 def history_rows(sibling_at_576):

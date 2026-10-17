@@ -3,16 +3,16 @@ import pytest
 
 from oom import model as m
 from oom import predict as p
-from oom import state as st
 from oom import steps as sp
-from oom_helpers import (FakeFleet, FakeRunner, OWN, SIB, combo, combos4, history_rows, make_args, mean_of, package_combo, read,
+from oom_helpers import (FakeFleet, FakeRunner, OWN, SIB, combo, combos4, history_rows, make_args, make_state, mean_of, package_combo, read,
                          sibling_state)
 
 
 def test_steps_follow_the_heap_and_start_at_the_recorded_frontier(tmp_path):
-    state = st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    args = make_args(tmp_path)
+    state = make_state(tmp_path, args)
     runner = FakeRunner(lambda heap: 100 + (heap - 512) * 2)          # frontier 100M, 228M, 356M, 484M, 612M
-    sp.run_all(make_args(tmp_path), [combo()], lambda c: runner, state, log=lambda *a: None)
+    sp.run_all(args, [combo()], lambda c: runner, state, log=lambda *a: None)
     rows = read(tmp_path / "ranges.csv")
     assert [r["Heap MB"] for r in rows] == ["512", "576", "640", "704", "768"]
     assert all(r["Status"] == "RANGE" for r in rows)
@@ -26,83 +26,75 @@ def test_steps_follow_the_heap_and_start_at_the_recorded_frontier(tmp_path):
 
 
 def test_heap_steps_stop_when_everything_passes(tmp_path):
-    state = st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    args = make_args(tmp_path, heap_max=2048)
+    state = make_state(tmp_path, args)
     runner = FakeRunner(lambda heap: 10**9 if heap >= 640 else 200)
-    sp.run_all(make_args(tmp_path, heap_max=2048), [combo()], lambda c: runner, state, log=lambda *a: None)
+    sp.run_all(args, [combo()], lambda c: runner, state, log=lambda *a: None)
     rows = read(tmp_path / "ranges.csv")
     assert [r["Status"] for r in rows] == ["RANGE", "RANGE", "ALL_PASS"] and rows[-1]["Heap MB"] == "640"
     assert not any(heap > 640 for heap, _ in runner.calls)
 
 
 def test_a_step_with_an_error_is_skipped_and_the_next_one_goes_on(tmp_path):
-    state = st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    args = make_args(tmp_path)
+    state = make_state(tmp_path, args)
     runner = FakeRunner(lambda heap: 300, errors={576})
-    sp.run_all(make_args(tmp_path), [combo()], lambda c: runner, state, log=lambda *a: None)
+    sp.run_all(args, [combo()], lambda c: runner, state, log=lambda *a: None)
     assert [r["Heap MB"] for r in read(tmp_path / "ranges.csv")] == ["512", "640", "704", "768"]
     assert "ERROR" in [r["Outcome"] for r in read(tmp_path / "runs.csv")]
 
 
 def test_too_many_skipped_steps_in_a_row_stop_the_script(tmp_path):
-    state = st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    args = make_args(tmp_path)
+    state = make_state(tmp_path, args)
     runner = FakeRunner(lambda heap: 300, errors={512, 576, 640})
     with pytest.raises(SystemExit, match="3 heap steps in a row"):
-        sp.run_all(make_args(tmp_path), [combo()], lambda c: runner, state, log=lambda *a: None)
+        sp.run_all(args, [combo()], lambda c: runner, state, log=lambda *a: None)
 
 
 def test_a_second_run_repeats_nothing(tmp_path):
     args = make_args(tmp_path)
     first = FakeRunner(lambda heap: 300)
-    sp.run_all(args, [combo()], lambda c: first, st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
+    sp.run_all(args, [combo()], lambda c: first, make_state(tmp_path, args), log=lambda *a: None)
     second = FakeRunner(lambda heap: 300)
-    sp.run_all(args, [combo()], lambda c: second, st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
+    sp.run_all(args, [combo()], lambda c: second, make_state(tmp_path, args), log=lambda *a: None)
     assert first.calls and not second.calls
     assert len(read(tmp_path / "ranges.csv")) == 5
-
-
-def test_resume_after_an_interrupted_step_reuses_its_runs(tmp_path):
-    args = make_args(tmp_path, heap_max=512)
-    state = st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
-    runner = FakeRunner(lambda heap: 300)
-    sp.run_all(args, [combo()], lambda c: runner, state, log=lambda *a: None)
-    full = len(runner.calls)
-    (tmp_path / "ranges.csv").unlink()                  # the step did not finish, its runs are recorded
-    again = FakeRunner(lambda heap: 300)
-    sp.run_all(args, [combo()], lambda c: again, st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
-    assert full > 0 and not again.calls
-    assert len(read(tmp_path / "ranges.csv")) == 1
 
 
 def test_recorded_errors_are_retried_only_on_request(tmp_path):
     args = make_args(tmp_path, heap_max=512, max_skipped=9)
     first = FakeRunner(lambda heap: 300, errors={512})
-    sp.run_all(args, [combo()], lambda c: first, st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
+    sp.run_all(args, [combo()], lambda c: first, make_state(tmp_path, args), log=lambda *a: None)
     same = FakeRunner(lambda heap: 300)
-    sp.run_all(args, [combo()], lambda c: same, st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
+    sp.run_all(args, [combo()], lambda c: same, make_state(tmp_path, args), log=lambda *a: None)
     assert not same.calls and not read(tmp_path / "ranges.csv")
     retry = FakeRunner(lambda heap: 300)
-    sp.run_all(make_args(tmp_path, heap_max=512, retry_errors=True), [combo()], lambda c: retry,
-              st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
+    retry_args = make_args(tmp_path, heap_max=512, retry_errors=True)
+    sp.run_all(retry_args, [combo()], lambda c: retry, make_state(tmp_path, retry_args), log=lambda *a: None)
     assert retry.calls and len(read(tmp_path / "ranges.csv")) == 1
 
 
 def test_all_combinations_do_each_heap_size_together(tmp_path):
-    state = st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    args = make_args(tmp_path)
+    state = make_state(tmp_path, args)
     order, deleted = [], []
     combos = combos4()
-    sp.run_all(make_args(tmp_path), combos, FakeFleet(lambda c, heap: 300 + heap, order, deleted), state, log=lambda *a: None)
+    sp.run_all(args, combos, FakeFleet(lambda c, heap: 300 + heap, order, deleted), state, log=lambda *a: None)
     rows = read(tmp_path / "ranges.csv")
-    assert [r["Heap MB"] for r in rows] == [str(h) for h in (512, 576, 640, 704, 768) for _ in combos]  # heap by heap
-    assert [(r["Dremio ver"], r["Java image"]) for r in rows[:4]] == [(c.version, c.image) for c in combos]
+    assert sorted((r["Dremio ver"], r["Java image"], r["Heap MB"]) for r in rows) == \
+        sorted((c.version, c.image, str(h)) for c in combos for h in (512, 576, 640, 704, 768))
     heaps_in_run_order = [h for _, h in dict.fromkeys(order)]
-    assert heaps_in_run_order == sorted(heaps_in_run_order)
+    assert heaps_in_run_order == sorted(heaps_in_run_order)      # heap by heap
     assert len(deleted) == 5 * 4                    # the container of every step is deleted when the step is done
 
 
 def test_a_combination_that_only_passes_drops_out_the_others_go_on(tmp_path):
-    state = st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    args = make_args(tmp_path)
+    state = make_state(tmp_path, args)
     combos = combos4()
     limit = lambda c, heap: 10**9 if c == combos[0] and heap >= 576 else 300 + heap
-    sp.run_all(make_args(tmp_path), combos, FakeFleet(limit, [], []), state, log=lambda *a: None)
+    sp.run_all(args, combos, FakeFleet(limit, [], []), state, log=lambda *a: None)
     per_combo = {}
     for r in read(tmp_path / "ranges.csv"):
         per_combo.setdefault((r["Dremio ver"], r["Java image"]), []).append(r["Heap MB"])
@@ -111,9 +103,10 @@ def test_a_combination_that_only_passes_drops_out_the_others_go_on(tmp_path):
 
 
 def test_a_combination_without_a_result_starts_in_a_window_around_another_ones(tmp_path):
-    state = st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    args = make_args(tmp_path, heap_max=512)
+    state = make_state(tmp_path, args)
     combos = combos4()[:2]
-    sp.run_all(make_args(tmp_path, heap_max=512), combos, FakeFleet(lambda c, heap: 300 + heap, [], []), state, log=lambda *a: None)
+    sp.run_all(args, combos, FakeFleet(lambda c, heap: 300 + heap, [], []), state, log=lambda *a: None)
     runs = read(tmp_path / "runs.csv")
     first = [int(r["Rows"]) for r in runs if r["Java image"] == combos[0].image and r["Dremio ver"] == combos[0].version]
     second = [int(r["Rows"]) for r in runs if r["Java image"] == combos[1].image and r["Dremio ver"] == combos[1].version]
@@ -121,19 +114,21 @@ def test_a_combination_without_a_result_starts_in_a_window_around_another_ones(t
 
 
 def test_a_step_with_recorded_runs_does_not_repeat_them_and_a_known_bracket_needs_no_search(tmp_path):
-    state = st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    args = make_args(tmp_path, heap_max=512)
+    state = make_state(tmp_path, args)
     for rows, outcome in ((460, m.PASS), (530, m.FAIL), (495, m.PASS), (512, m.FAIL)):
         state.add_run(combo(), 512, rows, outcome)
     runner = FakeRunner(lambda heap: 500)
-    sp.run_all(make_args(tmp_path, heap_max=512), [combo()], lambda c: runner, state, log=lambda *a: None)
+    sp.run_all(args, [combo()], lambda c: runner, state, log=lambda *a: None)
     assert runner.calls == [(512, 503)]                                  # only the halving of [495, 512]
     assert read(tmp_path / "ranges.csv")[0]["Status"] == "RANGE"
 
 
 def test_a_moving_frontier_costs_few_runs_per_step(tmp_path):
-    state = st.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    args = make_args(tmp_path, heap_max=1024, precision=20)
+    state = make_state(tmp_path, args)
     runner = FakeRunner(lambda heap: 300 + (heap - 512) * 3)             # +192M per heap step
-    sp.run_all(make_args(tmp_path, heap_max=1024, precision=20), [combo()], lambda c: runner, state, log=lambda *a: None)
+    sp.run_all(args, [combo()], lambda c: runner, state, log=lambda *a: None)
     per_heap = {}
     for heap, _ in runner.calls:
         per_heap[heap] = per_heap.get(heap, 0) + 1
@@ -144,23 +139,25 @@ def test_a_real_case_the_next_run_after_a_pass_at_558(tmp_path):
     """The log of the real runs: own PASS at 388, 408, 428, 558; the sibling (26.1.8 / wolfi-jdk) PASS 658, 678, FAIL 698
     at heap 576; own history 118M -> 378M. The next run is 678M: the sibling passed there, so a lower run would be idle."""
     rows = history_rows([(658, "PASS"), (698, "FAIL"), (678, "PASS")]) + [(*OWN, 576, r, "PASS") for r in (388, 408, 428, 558)]
-    state = sibling_state(tmp_path, rows)
+    args = make_args(tmp_path, heap_start=576, heap_max=576, window=10, precision=20)
+    state = sibling_state(tmp_path, rows, args)
     old, new = package_combo(*SIB), package_combo(*OWN)
     assert p.bracket(state.heap_runs(new)[576]) == (558, None)
-    assert p.first_guess(make_args(tmp_path, window=10), state, new, [old], 576)[0] == 678
+    assert p.first_guess(args, state, new, [old], 576)[0] == 678
     runner = FakeRunner(lambda heap: 700)
-    sp.run_all(make_args(tmp_path, heap_start=576, heap_max=576, window=10, precision=20), [old, new],
+    sp.run_all(args, [old, new],
               lambda c: runner, state, log=lambda *a: None)
     assert runner.rows[0] == 678 and 818 not in runner.rows
 
 
 def test_the_real_case_goes_to_678_and_then_698_and_nothing_above(tmp_path):
     rows = history_rows([(658, "PASS"), (698, "FAIL"), (678, "PASS")]) + [(*OWN, 576, r, "PASS") for r in (388, 408, 428, 558)]
-    state = sibling_state(tmp_path, rows)
+    args = make_args(tmp_path, heap_start=576, heap_max=576, window=10, precision=20)
+    state = sibling_state(tmp_path, rows, args)
     old, new = package_combo(*SIB), package_combo(*OWN)
     assert p.sibling_fail_cap(state, [old], 576) == 698 and p.sibling_fail_cap(state, [new], 576) is None
     runner = FakeRunner(lambda heap: 690)
-    sp.run_all(make_args(tmp_path, heap_start=576, heap_max=576, window=10, precision=20), [old, new],
+    sp.run_all(args, [old, new],
               lambda c: runner, state, log=lambda *a: None)
     assert runner.rows == [678, 698]                                                   # two runs, bracket [678, 698]
 
@@ -168,10 +165,11 @@ def test_the_real_case_goes_to_678_and_then_698_and_nothing_above(tmp_path):
 def test_the_real_case_after_a_fail_at_678_the_next_run_is_the_sibling_pass_658(tmp_path):
     rows = history_rows([(658, "PASS"), (698, "FAIL"), (678, "PASS")]) + \
         [(*OWN, 576, r, "PASS") for r in (388, 408, 428, 558)] + [(*OWN, 576, 678, "FAIL")]
-    state = sibling_state(tmp_path, rows)
+    args = make_args(tmp_path, heap_start=576, heap_max=576, window=10, precision=20)
+    state = sibling_state(tmp_path, rows, args)
     old, new = package_combo(*SIB), package_combo(*OWN)
     assert p.sibling_passes(state, [old], 576) == [658, 678]
     runner = FakeRunner(lambda heap: 670)
-    sp.run_all(make_args(tmp_path, heap_start=576, heap_max=576, window=10, precision=20), [old, new],
+    sp.run_all(args, [old, new],
               lambda c: runner, state, log=lambda *a: None)
     assert runner.rows == [658]

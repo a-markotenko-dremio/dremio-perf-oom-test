@@ -1,9 +1,24 @@
 """The search of the row count where the test starts to fail: pure logic, no I/O."""
 from .model import FAIL, PASS, Result
+from .predict import bracket
 
 
 def heap_sizes(start, step, maximum):
     return list(range(start, maximum + 1, step))
+
+
+def step_result(outcomes, precision, floor, ceil):
+    """The Result of a step from its recorded runs {rows_m: PASS | FAIL}, None while the step is not finished: RANGE when
+    the highest PASS and the lowest FAIL are `precision` close, ALL_PASS when the highest PASS reached `ceil` without a
+    FAIL, ALL_FAIL when the lowest FAIL is at `floor` without a PASS."""
+    lo, hi = bracket(outcomes)
+    if lo is not None and hi is not None:
+        return Result("RANGE", lo, hi) if hi - lo <= precision else None
+    if hi is None and lo is not None and lo >= ceil:
+        return Result("ALL_PASS", pass_max=lo)
+    if lo is None and hi is not None and hi <= floor:
+        return Result("ALL_FAIL", fail_min=hi)
+    return None
 
 
 def search(run, lo, hi, precision, floor, ceil):

@@ -15,11 +15,12 @@ Run the tests (offline, no Dremio needed): `.venv/bin/python -m pytest tests`
 - Logic is not duplicated between bash and Python, between scripts and modules, or between tests and code. Shared logic goes to `scripts/lib/` (shell) or a module of a package (Python).
 - Parsing and formatting of quantities (K/M/G, rows, MB), rounding, the container name and IP, paths (`/mnt/ubuntu-var/dremio`) and defaults (heap, direct memory, CPUs) are defined in exactly one place. A new copy of such logic is a defect.
 - A new default, flag or CSV column is added in one place, and `--help`, the docstring, the `Makefile` and the tests are updated in the same change.
+- Every fact is stored in one place. Derived data (summaries, aggregates) is computed from the primary data, not stored separately as a second source of truth. A derived file that is needed as an output (for a chart) is generated and never read back as an input.
 - Leave no dead code: functions, arguments, flags and tests that became unused are removed in the same change.
 
 ## SDLC: how to work
 
-1. **Requirements.** Clarify an ambiguous task before implementing it (one short question with a proposed default). If the user said they will give the command to implement after the discussion, write nothing before that command.
+1. **Requirements.** Clarify an ambiguous task before implementing it (one short question with a proposed default). If the user said they will give the command to implement after the discussion, write nothing before that command. A change that adds persisted state (a file, format, database, cache, column or field) first names the primary source and what is derived from it, and agrees on it before implementation.
 2. **Scope.** Change only what was asked. No changes of file or CSV formats, no new columns, flags or refactoring "on the way". If something useful comes up, propose it, do not do it. If the user says a change was not requested, revert it.
 3. **Tests with the change.** Every behaviour change comes with unit tests. A test must reproduce the real case from the user's logs (with their data), not only an idealized one. A test that can never fail does not count. Do not commit until the whole suite passes.
 4. **Verification.** Do not claim that something works before running it. Say explicitly what was not verified (a real Dremio run, another machine). The runs happen on other hosts: draw conclusions about them from the data the user provides, not from local files in `data/`.

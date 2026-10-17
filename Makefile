@@ -4,7 +4,7 @@ PYTHON := $(VENV)/bin/python
 .PHONY: test test-container create-container venv clean data report scatter
 
 test: $(VENV)/.installed
-	$(PYTHON) -m pytest -v -rs tests/test_catalog_sales.py
+	$(PYTHON) -m pytest -v -rs tests
 
 venv: $(VENV)/.installed
 
