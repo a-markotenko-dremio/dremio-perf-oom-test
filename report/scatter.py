@@ -1,0 +1,150 @@
+"""Draws a PASS/FAIL scatter chart of any three columns of a CSV file as SVG.
+
+    python3 -m report.scatter FILE.csv X Y VERDICT [-o scatter.svg]
+
+X, Y and VERDICT are column names from the header row of the file. Every row is a point at
+(X, Y); the VERDICT column colours it: PASS green, FAIL red. The X and Y values may carry a K (kilo),
+M (mega) or G (giga) suffix ("100K", "1.44G", decimal units) and the axes are labelled the same way.
+Rows whose X or Y is not a number, or whose verdict is neither PASS nor FAIL, are skipped.
+
+    python3 -m report.scatter data/test_results.csv Rows DREMIO_MAX_HEAP_MEMORY_SIZE_MB Verdict
+"""
+import argparse
+import csv
+import math
+import re
+import sys
+from html import escape
+
+from .canvas import CSS, DARK, LEFT, LIGHT, PW, W, Svg, y_axis
+
+COLORS = {"PASS": ("#1a9850", "#3dbb6f"), "FAIL": ("#d73027", "#f06b5f")}  # light, dark theme
+UNITS = (("G", 10**9), ("M", 10**6), ("K", 10**3))
+PH, TOP = 460, 90
+
+
+def parse_value(text):
+    """'100K' -> 100000.0, '1.44G' -> 1440000000.0, '2.5' -> 2.5. ValueError for anything else."""
+    m = re.fullmatch(r"([+-]?\d+(?:\.\d+)?)\s*([KMG]?)", str(text).strip().upper())
+    if not m:
+        raise ValueError(f"not a number with an optional K/M/G suffix: {text!r}")
+    return float(m.group(1)) * dict(UNITS + (("", 1),))[m.group(2)]
+
+
+def format_value(v):
+    """The inverse of parse_value for axis labels: 1440000000 -> '1.44G', 100000 -> '100K', 4096 -> '4096'."""
+    for unit, size in UNITS:
+        if abs(v) >= size and math.isclose(round(v / size, 2) * size, v, rel_tol=1e-9):
+            return f"{v / size:.2f}".rstrip("0").rstrip(".") + unit
+    return f"{v:g}"
+
+
+def nice_ticks(lo, hi, want=8):
+    """Round values (1, 2 or 5 times a power of ten) between lo and hi, about `want` of them."""
+    span = hi - lo
+    raw = span / want
+    mag = 10 ** math.floor(math.log10(raw))
+    step = next(m * mag for m in (1, 2, 5, 10) if m * mag >= raw)
+    first = math.ceil(lo / step - 1e-9) * step
+    ticks, i = [], 0
+    while first + i * step <= hi + step * 1e-9:
+        ticks.append(round(first + i * step, 10))
+        i += 1
+    return ticks
+
+
+def pad_range(values):
+    lo, hi = min(values), max(values)
+    pad = (hi - lo) * 0.06 or (abs(hi) * 0.1 or 1)
+    return lo - pad, hi + pad
+
+
+def column_index(header, name):
+    """The index of the column with this header name (exact match, else ignoring case and surrounding spaces)."""
+    names = [h.strip() for h in header]
+    for matches in (lambda h: h == name.strip(), lambda h: h.lower() == name.strip().lower()):
+        found = [i for i, h in enumerate(names) if matches(h)]
+        if len(found) == 1:
+            return found[0]
+        if len(found) > 1:
+            raise SystemExit(f"column name {name!r} is ambiguous: it is the header of columns {found}")
+    raise SystemExit(f"no column named {name!r}; the columns are: " + ", ".join(repr(h) for h in names))
+
+
+def load(path, x_spec, y_spec, v_spec):
+    """([(x, y, 'PASS'|'FAIL', line number)], skipped row count, (x name, y name, verdict name))."""
+    with open(path, newline="") as f:
+        rows = list(csv.reader(f))
+    if not rows:
+        raise SystemExit(f"{path} is empty")
+    header = rows[0]
+    xi, yi, vi = (column_index(header, s) for s in (x_spec, y_spec, v_spec))
+    points, skipped = [], 0
+    for n, r in enumerate(rows[1:], start=2):
+        try:
+            verdict = r[vi].strip().upper()
+            if verdict not in COLORS:
+                raise ValueError(verdict)
+            points.append((parse_value(r[xi]), parse_value(r[yi]), verdict, n))
+        except (ValueError, IndexError):
+            skipped += 1
+    return points, skipped, tuple(header[i].strip() for i in (xi, yi, vi))
+
+
+def render(points, names, title):
+    xs, ys = [p[0] for p in points], [p[1] for p in points]
+    xlo, xhi = pad_range(xs)
+    ylo, yhi = pad_range(ys)
+    px = lambda x: LEFT + (x - xlo) / (xhi - xlo) * PW
+    py = lambda y: TOP + PH - (y - ylo) / (yhi - ylo) * PH
+
+    svg = Svg()
+    svg.text(LEFT, 30, title, "title ttl")
+    counts = {v: sum(1 for p in points if p[2] == v) for v in COLORS}
+    lx = LEFT
+    for v in COLORS:
+        svg.add(f'<circle cx="{lx + 6}" cy="52" r="5.5" fill="{COLORS[v][0]}" class="p{v}"/>')
+        svg.text(lx + 18, 56, f"{v} ({counts[v]})")
+        lx += 110
+    y_axis(svg, TOP, PH, ylo, yhi, nice_ticks(ylo, yhi), format_value, names[1])
+    for t in nice_ticks(xlo, xhi):
+        svg.line(px(t), TOP, px(t), TOP + PH, "grid", LIGHT["grid"])
+        svg.text(px(t), TOP + PH + 20, format_value(t), anchor="middle")
+    svg.text(LEFT + PW / 2, TOP + PH + 44, names[0], anchor="middle")
+    # FAIL last: a failure must not be hidden under a pass at the same spot; both stay visible (opacity)
+    for verdict in ("PASS", "FAIL"):
+        for x, y, v, n in points:
+            if v == verdict:
+                svg.add(f'<circle cx="{px(x):.1f}" cy="{py(y):.1f}" r="6" fill="{COLORS[v][0]}" class="p{v}" '
+                        f'fill-opacity="0.8" stroke="{LIGHT["surface"]}" stroke-width="1.5">'
+                        f'<title>{escape(f"{names[0]} {format_value(x)}, {names[1]} {format_value(y)}: {v} (line {n})")}</title></circle>')
+
+    H = TOP + PH + 64
+    head = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
+            f'role="img" fill="{LIGHT["ink2"]}" aria-label="{escape(title)}">')
+    dark_points = "".join(f"  .p{v} {{ fill: {c[1]} }}\n" for v, c in COLORS.items())
+    style = "<style>" + CSS % {**DARK, "series": dark_points} + "</style>"
+    bg = f'<rect width="{W}" height="{H}" fill="{LIGHT["surface"]}" class="bg"/>'
+    return "\n".join([head, style, bg, *svg.parts, "</svg>"])
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("csv", help="CSV file with a header row")
+    ap.add_argument("x", help="X column: header name")
+    ap.add_argument("y", help="Y column: header name")
+    ap.add_argument("verdict", help="PASS/FAIL column: header name")
+    ap.add_argument("-o", "--output", default="scatter.svg")
+    ap.add_argument("--title", help="chart title (default: 'Y vs X')")
+    args = ap.parse_args(argv)
+    points, skipped, names = load(args.csv, args.x, args.y, args.verdict)
+    if not points:
+        raise SystemExit(f"no usable rows in {args.csv}: X and Y must be numbers (optional K/M/G suffix), "
+                         f"the verdict PASS or FAIL")
+    with open(args.output, "w") as f:
+        f.write(render(points, names, args.title or f"{names[1]} vs {names[0]}"))
+    print(f"written {args.output}: {len(points)} points" + (f", {skipped} rows skipped" if skipped else ""))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
