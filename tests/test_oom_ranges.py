@@ -110,7 +110,7 @@ def test_combo_version_is_short():
 def test_steps_follow_the_heap_and_use_a_window_after_the_first(tmp_path):
     state = o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
     runner = FakeRunner(lambda heap: 100 + (heap - 512) * 2)          # frontier 100M, 228M, 356M
-    o.run_combo(make_args(tmp_path), combo(), runner, state, log=lambda *a: None)
+    o.run_all(make_args(tmp_path), [combo()], lambda c: runner, state, log=lambda *a: None)
     rows = read(tmp_path / "ranges.csv")
     assert [r["Heap MB"] for r in rows] == ["512", "576", "640", "704", "768"]
     assert all(r["Status"] == "RANGE" for r in rows)
@@ -123,7 +123,7 @@ def test_steps_follow_the_heap_and_use_a_window_after_the_first(tmp_path):
 def test_heap_steps_stop_when_everything_passes(tmp_path):
     state = o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
     runner = FakeRunner(lambda heap: 10**9 if heap >= 640 else 200)
-    o.run_combo(make_args(tmp_path, heap_max=2048), combo(), runner, state, log=lambda *a: None)
+    o.run_all(make_args(tmp_path, heap_max=2048), [combo()], lambda c: runner, state, log=lambda *a: None)
     rows = read(tmp_path / "ranges.csv")
     assert [r["Status"] for r in rows] == ["RANGE", "RANGE", "ALL_PASS"] and rows[-1]["Heap MB"] == "640"
     assert not any(heap > 640 for heap, _ in runner.calls)
@@ -132,7 +132,7 @@ def test_heap_steps_stop_when_everything_passes(tmp_path):
 def test_a_step_with_an_error_is_skipped_and_the_next_one_goes_on(tmp_path):
     state = o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
     runner = FakeRunner(lambda heap: 300, errors={576})
-    o.run_combo(make_args(tmp_path), combo(), runner, state, log=lambda *a: None)
+    o.run_all(make_args(tmp_path), [combo()], lambda c: runner, state, log=lambda *a: None)
     assert [r["Heap MB"] for r in read(tmp_path / "ranges.csv")] == ["512", "640", "704", "768"]
     assert "ERROR" in [r["Outcome"] for r in read(tmp_path / "runs.csv")]
 
@@ -141,15 +141,15 @@ def test_too_many_skipped_steps_in_a_row_stop_the_script(tmp_path):
     state = o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
     runner = FakeRunner(lambda heap: 300, errors={512, 576, 640})
     with pytest.raises(SystemExit, match="3 heap steps in a row"):
-        o.run_combo(make_args(tmp_path), combo(), runner, state, log=lambda *a: None)
+        o.run_all(make_args(tmp_path), [combo()], lambda c: runner, state, log=lambda *a: None)
 
 
 def test_a_second_run_repeats_nothing(tmp_path):
     args = make_args(tmp_path)
     first = FakeRunner(lambda heap: 300)
-    o.run_combo(args, combo(), first, o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
+    o.run_all(args, [combo()], lambda c: first, o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
     second = FakeRunner(lambda heap: 300)
-    o.run_combo(args, combo(), second, o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
+    o.run_all(args, [combo()], lambda c: second, o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
     assert first.calls and not second.calls
     assert len(read(tmp_path / "ranges.csv")) == 5
 
@@ -158,11 +158,11 @@ def test_resume_after_an_interrupted_step_reuses_its_runs(tmp_path):
     args = make_args(tmp_path, heap_max=512)
     state = o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
     runner = FakeRunner(lambda heap: 300)
-    o.run_combo(args, combo(), runner, state, log=lambda *a: None)
+    o.run_all(args, [combo()], lambda c: runner, state, log=lambda *a: None)
     full = len(runner.calls)
     (tmp_path / "ranges.csv").unlink()                  # the step did not finish, its runs are recorded
     again = FakeRunner(lambda heap: 300)
-    o.run_combo(args, combo(), again, o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
+    o.run_all(args, [combo()], lambda c: again, o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
     assert full > 0 and not again.calls
     assert len(read(tmp_path / "ranges.csv")) == 1
 
@@ -170,13 +170,13 @@ def test_resume_after_an_interrupted_step_reuses_its_runs(tmp_path):
 def test_recorded_errors_are_retried_only_on_request(tmp_path):
     args = make_args(tmp_path, heap_max=512, max_skipped=9)
     first = FakeRunner(lambda heap: 300, errors={512})
-    o.run_combo(args, combo(), first, o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
+    o.run_all(args, [combo()], lambda c: first, o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
     same = FakeRunner(lambda heap: 300)
-    o.run_combo(args, combo(), same, o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
+    o.run_all(args, [combo()], lambda c: same, o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
     assert not same.calls and not read(tmp_path / "ranges.csv")
     retry = FakeRunner(lambda heap: 300)
-    o.run_combo(make_args(tmp_path, heap_max=512, retry_errors=True), combo(), retry,
-                o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
+    o.run_all(make_args(tmp_path, heap_max=512, retry_errors=True), [combo()], lambda c: retry,
+              o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv"), log=lambda *a: None)
     assert retry.calls and len(read(tmp_path / "ranges.csv")) == 1
 
 
@@ -194,3 +194,47 @@ def test_default_heap_max_is_the_container_without_direct_and_reserve(tmp_path, 
     assert a.heap_max == 8192 - 4096 - 2048 and len(a.packages) == 2 and a.java_images == ["eclipse-temurin:21-jdk", "wolfi-jdk:21"]
     with pytest.raises(SystemExit, match="even"):
         o.parse_args(["--heap-step", "63"])
+
+
+def combos4():
+    return [o.Combo(f"/x/dremio-enterprise-{v}-1.tar.gz", img) for v in ("26.1.8", "26.1.10") for img in ("a", "b")]
+
+
+class FakeFleet:
+    """One FakeRunner per combination; remembers the order of the runs and the deleted containers."""
+    def __init__(self, limit, order, deleted):
+        self.runners, self.limit, self.order, self.deleted = {}, limit, order, deleted
+
+    def __call__(self, combo):
+        if combo not in self.runners:
+            runner = FakeRunner(lambda heap, c=combo: self.limit(c, heap))
+            runner.delete = lambda c=combo: self.deleted.append(c)
+            run = runner.run
+            runner.run = lambda heap, rows, c=combo, run=run: (self.order.append((c, heap)), run(heap, rows))[1]
+            self.runners[combo] = runner
+        return self.runners[combo]
+
+
+def test_all_combinations_do_each_heap_size_together(tmp_path):
+    state = o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    order, deleted = [], []
+    combos = combos4()
+    o.run_all(make_args(tmp_path), combos, FakeFleet(lambda c, heap: 300 + heap, order, deleted), state, log=lambda *a: None)
+    rows = read(tmp_path / "ranges.csv")
+    assert [r["Heap MB"] for r in rows] == [str(h) for h in (512, 576, 640, 704, 768) for _ in combos]  # heap by heap
+    assert [(r["Dremio ver"], r["Java image"]) for r in rows[:4]] == [(c.version, c.image) for c in combos]
+    heaps_in_run_order = [h for _, h in dict.fromkeys(order)]
+    assert heaps_in_run_order == sorted(heaps_in_run_order)
+    assert len(deleted) == 5 * 4                    # the container of every step is deleted when the step is done
+
+
+def test_a_combination_that_only_passes_drops_out_the_others_go_on(tmp_path):
+    state = o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+    combos = combos4()
+    limit = lambda c, heap: 10**9 if c == combos[0] and heap >= 576 else 300 + heap
+    o.run_all(make_args(tmp_path), combos, FakeFleet(limit, [], []), state, log=lambda *a: None)
+    per_combo = {}
+    for r in read(tmp_path / "ranges.csv"):
+        per_combo.setdefault((r["Dremio ver"], r["Java image"]), []).append(r["Heap MB"])
+    key = lambda c: (c.version, c.image)
+    assert per_combo[key(combos[0])] == ["512", "576"] and len(per_combo[key(combos[1])]) == 5

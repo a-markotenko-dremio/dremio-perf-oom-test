@@ -4,11 +4,12 @@
     ./oom_ranges.py [--plan] [options]
 
 Combinations: every Dremio package x every Java image (by default Dremio 26.1.8 and 26.1.10 x
-eclipse-temurin:21-jdk and wolfi-jdk:21 = 4), one after the other, each in its own container of
---container-mb with --direct-mb of direct memory and --cpus CPUs.
+eclipse-temurin:21-jdk and wolfi-jdk:21 = 4), each in its own container of --container-mb with
+--direct-mb of direct memory and --cpus CPUs. All combinations walk the heap sizes together: at every
+heap size each of them does its step, one after the other, so that the chart grows for all at once.
 
-For a combination the heap grows from --heap-start by --heap-step (512, 576, 640, ... MB) until it
-reaches the memory of the container (container - direct - --reserve-mb) or until the test passes
+The heap grows from --heap-start by --heap-step (512, 576, 640, ... MB) until it reaches the memory
+of the container (container - direct - --reserve-mb) or, for a combination, until the test passes
 at the highest row count (--rows-high): a larger heap would pass too. At every heap size a binary
 search over the row count finds the pass/fail frontier: a run that PASSes moves the lower end up,
 a run that FAILs moves the upper end down, until they are --precision apart. The first step searches
@@ -187,53 +188,79 @@ def step_center(row):
 
 
 # ------------------------------------------------------------------ one combination
-def run_combo(args, combo, runner, state, log=print):
-    """Walks the heap sizes of a combination. `runner.run(heap, rows_m) -> PASS | FAIL | ERROR`."""
-    center, skipped = None, 0
-    for heap in heap_sizes(args.heap_start, args.heap_step, args.heap_max):
-        done = state.step(combo, heap)
-        if done:
-            log(f"### {combo.version} {combo.image} heap={heap}: recorded ({done['Status']}, mean {done['Mean rows'] or '-'})")
-            if done["Status"] == "ALL_PASS":
-                return
-            center = step_center(done) if done["Status"] == "RANGE" else args.rows_low + args.window
-            continue
-        if center is None:
-            lo, hi = args.rows_low, args.rows_high
+class Progress:
+    """Where the walk over the heap sizes stands for one combination."""
+
+    def __init__(self):
+        self.center = None       # middle of the last finished step, millions of rows
+        self.skipped = 0         # heap steps skipped in a row
+        self.finished = False    # nothing fails any more: larger heaps pass too
+
+
+def run_step(args, combo, heap, runner, state, progress, log=print):
+    """The step of a combination at one heap size. `runner.run(heap, rows_m) -> PASS | FAIL | ERROR`."""
+    done = state.step(combo, heap)
+    if done:
+        log(f"### {combo.version} {combo.image} heap={heap}: recorded ({done['Status']}, mean {done['Mean rows'] or '-'})")
+        progress.finished = done["Status"] == "ALL_PASS"
+        if done["Status"] != "ALL_PASS":
+            progress.center = step_center(done) if done["Status"] == "RANGE" else args.rows_low + args.window
+        return
+    if progress.center is None:
+        lo, hi = args.rows_low, args.rows_high
+    else:
+        lo, hi = window_around(progress.center, args.window, args.rows_low, args.rows_high)
+    log(f"### {combo.version} {combo.image} heap={heap}: searching {lo}M..{hi}M")
+
+    def run(rows_m):
+        known = state.run_outcome(combo, heap, rows_m)
+        if known in (PASS, FAIL) or (known == ERROR and not args.retry_errors):
+            outcome = known
+            log(f"    {rows_m}M: recorded {outcome}")
         else:
-            lo, hi = window_around(center, args.window, args.rows_low, args.rows_high)
-        log(f"### {combo.version} {combo.image} heap={heap}: searching {lo}M..{hi}M")
+            outcome = runner.run(heap, rows_m)
+            state.add_run(combo, heap, rows_m, outcome)
+            log(f"    {rows_m}M: {outcome}")
+        if outcome == ERROR:
+            raise StepSkipped(f"{rows_m}M")
+        return outcome
 
-        def run(rows_m):
-            known = state.run_outcome(combo, heap, rows_m)
-            if known in (PASS, FAIL) or (known == ERROR and not args.retry_errors):
-                outcome = known
-                log(f"    {rows_m}M: recorded {outcome}")
-            else:
-                outcome = runner.run(heap, rows_m)
-                state.add_run(combo, heap, rows_m, outcome)
-                log(f"    {rows_m}M: {outcome}")
-            if outcome == ERROR:
-                raise StepSkipped(f"{rows_m}M")
-            return outcome
+    try:
+        result = search(run, lo, hi, args.precision, args.rows_low, args.rows_high)
+    except StepSkipped as e:
+        progress.skipped += 1
+        log(f"    heap={heap} skipped: the run at {e} ended with an error that is not a heap OOM "
+            f"({progress.skipped} in a row)")
+        if progress.skipped >= args.max_skipped:
+            raise SystemExit(f"{progress.skipped} heap steps in a row skipped: stopping, check the environment")
+        return
+    progress.skipped = 0
+    state.add_step(combo, heap, result)
+    log(f"    heap={heap}: {result.status}" + (f", PASS up to {result.pass_max}M, FAIL from {result.fail_min}M, "
+                                              f"mean {result.mean:g}M" if result.status == "RANGE" else ""))
+    if result.status == "ALL_PASS":
+        log("    no failure at the highest row count: a larger heap passes too, this combination is done")
+        progress.finished = True
+    else:
+        progress.center = result.mean if result.status == "RANGE" else args.rows_low + args.window
 
-        try:
-            result = search(run, lo, hi, args.precision, args.rows_low, args.rows_high)
-        except StepSkipped as e:
-            skipped += 1
-            log(f"    heap={heap} skipped: the run at {e} ended with an error that is not a heap OOM "
-                f"({skipped} in a row)")
-            if skipped >= args.max_skipped:
-                raise SystemExit(f"{skipped} heap steps in a row skipped: stopping, check the environment")
-            continue
-        skipped = 0
-        state.add_step(combo, heap, result)
-        log(f"    heap={heap}: {result.status}" + (f", PASS up to {result.pass_max}M, FAIL from {result.fail_min}M, "
-                                                  f"mean {result.mean:g}M" if result.status == "RANGE" else ""))
-        if result.status == "ALL_PASS":
-            log("    no failure at the highest row count: a larger heap passes too, next combination")
+
+def run_all(args, combos, runner_for, state, log=print):
+    """Walks the heap sizes of all combinations together: at every heap size each combination does its step, so
+    all the lines of the chart grow at the same time. The container of a step is deleted when the step is done
+    (the next heap size needs a new one anyway), so only one container exists at a time."""
+    progress = {c: Progress() for c in combos}
+    for heap in heap_sizes(args.heap_start, args.heap_step, args.heap_max):
+        for combo in combos:
+            if progress[combo].finished:
+                continue
+            runner = runner_for(combo)
+            try:
+                run_step(args, combo, heap, runner, state, progress[combo], log)
+            finally:
+                getattr(runner, "delete", lambda: None)()
+        if all(p.finished for p in progress.values()):
             return
-        center = result.mean if result.status == "RANGE" else args.rows_low + args.window
 
 
 # ------------------------------------------------------------------ the real runs
@@ -367,11 +394,17 @@ def main(argv=None):
         print(f"  {combo.version:<12} {combo.image:<24} {recorded}/{len(heaps)} steps recorded")
     if args.plan:
         return
-    for combo in combos:
-        runner = Runner(args, combo)
-        try:
-            run_combo(args, combo, runner, state)
-        finally:
+    runners = {}
+
+    def runner_for(combo):
+        if combo not in runners:
+            runners[combo] = Runner(args, combo)
+        return runners[combo]
+
+    try:
+        run_all(args, combos, runner_for, state)
+    finally:
+        for runner in runners.values():
             runner.delete()
 
 
