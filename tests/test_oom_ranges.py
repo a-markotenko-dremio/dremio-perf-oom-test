@@ -248,3 +248,13 @@ def test_a_combination_without_a_result_starts_in_a_window_around_another_ones(t
     first = [int(r["Rows"]) for r in runs if r["Java image"] == combos[0].image and r["Dremio ver"] == combos[0].version]
     second = [int(r["Rows"]) for r in runs if r["Java image"] == combos[1].image and r["Dremio ver"] == combos[1].version]
     assert first[0] == 725 and abs(second[0] - 812) <= 150
+
+
+def test_next_step_starts_at_the_previous_range_and_needs_few_runs_when_it_did_not_move():
+    lo, hi = o.window_around(37.5, 10, 10, 1440)
+    calls = []
+    def run(rows):
+        calls.append(rows)
+        return o.PASS if rows < 40 else o.FAIL
+    r = o.search(run, lo, hi, 10, 10, 1440)
+    assert r.status == "RANGE" and r.pass_max < 40 <= r.fail_min and len(calls) <= 3 and min(calls) >= 27

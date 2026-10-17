@@ -92,7 +92,7 @@ def heap_sizes(start, step, maximum):
 def search(run, lo, hi, precision, floor, ceil):
     """Binary search of the row count (millions) where `run(rows_m) -> PASS | FAIL` starts to fail.
 
-    Starts with the window lo..hi. If nothing failed in it the window moves up (and is as wide as before),
+    Starts with the window lo..hi. If nothing failed in it the window moves up (twice as wide as before),
     if nothing passed it moves down, until `ceil` / `floor` is reached: ALL_PASS / ALL_FAIL."""
     width = hi - lo
     memo = {}
@@ -116,6 +116,7 @@ def search(run, lo, hi, precision, floor, ceil):
             else:
                 if hi >= ceil:
                     return Result("ALL_PASS", pass_max=hi)
+                width *= 2
                 lo, hi, pass_max = hi, min(hi + width, ceil), hi
                 continue
         if pass_max is None:                      # nothing passed: is the lower end a pass?
@@ -124,6 +125,7 @@ def search(run, lo, hi, precision, floor, ceil):
             else:
                 if lo <= floor:
                     return Result("ALL_FAIL", fail_min=lo)
+                width *= 2
                 lo, hi, fail_min = max(lo - width, floor), lo, lo
                 continue
         return Result("RANGE", pass_max, fail_min)
@@ -360,7 +362,7 @@ def parse_args(argv=None):
     ap.add_argument("--rows-low", type=int, default=10, metavar="M", help="lowest row count, millions (default 10)")
     ap.add_argument("--rows-high", type=int, default=1440, metavar="M", help="highest row count, millions (default 1440 = 1.44G)")
     ap.add_argument("--precision", type=int, default=10, metavar="M", help="the search stops when PASS and FAIL are this close (default 10)")
-    ap.add_argument("--window", type=int, default=150, metavar="M", help="half width of the search window after the first step (default 150)")
+    ap.add_argument("--window", type=int, default=10, metavar="M", help="half width of the search window around the previous result after the first step (default 10)")
     ap.add_argument("--max-skipped", type=int, default=3, help="stop after this many skipped heap steps in a row")
     ap.add_argument("--retry-errors", action="store_true", help="run again the runs recorded as ERROR")
     ap.add_argument("--storage-root", default="/mnt/ubuntu-var/dremio", help="a combination stores its data in <root>/<container name>")
