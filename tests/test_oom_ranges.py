@@ -381,3 +381,76 @@ def test_a_known_fail_is_followed_by_the_prediction_from_below():
         return o.PASS if rows < 300 else o.FAIL
     r = o.search_guided(run, None, 500, 320, 40, 20, 10, 1440)
     assert calls[0] == 320 and r.pass_max < 300 <= r.fail_min
+
+
+def history_runs():
+    """Recorded runs as on the machine of the real runs: the own history of 26.1.10 / eclipse-temurin (brackets of
+    heap 320..512), the same for 26.1.8 / wolfi-jdk, and the runs at heap 576 pasted from the log."""
+    rows = ["Timestamp,Dremio ver,Java image,Heap MB,Rows,Outcome"]
+    for version, image, brackets in (
+            ("26.1.10", "eclipse-temurin:21-jdk", ((320, 32, 43), (384, 48, 68), (448, 108, 128), (512, 368, 388))),
+            ("26.1.8", "wolfi-jdk:21", ((320, 32, 43), (384, 43, 54), (448, 178, 198), (512, 438, 458)))):
+        for heap, p, f in brackets:
+            rows += [f"t,{version},{image},{heap},{p},PASS", f"t,{version},{image},{heap},{f},FAIL"]
+    rows += [f"t,26.1.8,wolfi-jdk:21,576,{r},{v}" for r, v in ((658, "PASS"), (698, "FAIL"), (678, "PASS"))]
+    rows += [f"t,26.1.10,eclipse-temurin:21-jdk,576,{r},PASS" for r in (388, 408, 428, 558)]
+    return "\n".join(rows) + "\n"
+
+
+def run_pairs(rows):
+    return "".join(f"t,{v},{i},{h},{r},{o}\n" for v, i, h, r, o in rows)
+
+
+def sibling_state(tmp_path, rows):
+    header = "Timestamp,Dremio ver,Java image,Heap MB,Rows,Outcome\n"
+    (tmp_path / "runs.csv").write_text(header + run_pairs(rows))
+    return o.State(tmp_path / "ranges.csv", tmp_path / "runs.csv")
+
+
+OWN = ("26.1.10", "eclipse-temurin:21-jdk")
+SIB = ("26.1.8", "wolfi-jdk:21")
+
+
+def history_rows(sibling_at_576):
+    """Own history 118M -> 378M (+260M per heap step), the sibling 188M -> 448M, i.e. always 70M higher."""
+    rows = []
+    for (v, i), brackets in ((OWN, ((448, 108, 128), (512, 368, 388))), (SIB, ((448, 178, 198), (512, 438, 458)))):
+        for heap, p, f in brackets:
+            rows += [(v, i, heap, p, "PASS"), (v, i, heap, f, "FAIL")]
+    return rows + [(*SIB, 576, r, o) for r, o in sibling_at_576]
+
+
+def test_without_a_sibling_at_this_heap_the_guess_is_the_own_trend(tmp_path):
+    state = sibling_state(tmp_path, history_rows([]))
+    assert o.first_guess(make_args(tmp_path, window=10), state, package_combo(*OWN), [package_combo(*SIB)], 576) == (638, 130)
+
+
+def test_the_guess_averages_the_own_trend_and_the_sibling_moved_by_the_usual_distance(tmp_path):
+    """Own trend 378 + 260 = 638M. The sibling's bracket at heap 576 is [600, 698], middle 649M, and the sibling is 70M higher
+    than this combination at both earlier heap sizes -> 579M. The average is 608.5M (rounded to 608), above the sibling's PASS 600."""
+    state = sibling_state(tmp_path, history_rows([(698, "FAIL"), (600, "PASS")]))
+    guess, step = o.first_guess(make_args(tmp_path, window=10), state, package_combo(*OWN), [package_combo(*SIB)], 576)
+    assert guess == 608 and step >= 130
+
+
+def test_a_sibling_pass_above_the_average_raises_the_guess_to_it(tmp_path):
+    """The sibling's [678, 698] -> 688 - 70 = 618M; with the own trend 638M the average is 628M, but the sibling passed
+    at 678M: a run below it is expected to pass and tells little, so the guess is 678M."""
+    state = sibling_state(tmp_path, history_rows([(698, "FAIL"), (678, "PASS")]))
+    assert o.first_guess(make_args(tmp_path, window=10), state, package_combo(*OWN), [package_combo(*SIB)], 576)[0] == 678
+
+
+def test_a_real_case_the_next_run_after_a_pass_at_558(tmp_path):
+    """The log of the real runs: own PASS at 388, 408, 428, 558; the sibling (26.1.8 / wolfi-jdk) PASS 658, 678, FAIL 698
+    at heap 576; own history 118M -> 378M. The next run is 678M: the sibling passed there, so a lower run would be idle."""
+    rows = history_rows([(658, "PASS"), (698, "FAIL"), (678, "PASS")]) + [(*OWN, 576, r, "PASS") for r in (388, 408, 428, 558)]
+    state = sibling_state(tmp_path, rows)
+    old, new = package_combo(*SIB), package_combo(*OWN)
+    assert o.bracket(state.heap_runs(new)[576]) == (558, None)
+    assert o.first_guess(make_args(tmp_path, window=10), state, new, [old], 576)[0] == 678
+    calls = []
+    runner = FakeRunner(lambda heap: 700)
+    runner.run = lambda heap, rows, run=runner.run: (calls.append(rows), run(heap, rows))[1]
+    o.run_all(make_args(tmp_path, heap_start=576, heap_max=576, window=10, precision=20), [old, new],
+              lambda c: runner, state, log=lambda *a: None)
+    assert calls[0] == 678 and 818 not in calls

@@ -14,8 +14,10 @@ at the highest row count (--rows-high): a larger heap would pass too. At every h
 finds the pass/fail frontier of the row count, to --precision. Runs cost hours, so it starts with a
 guess made from the runs already recorded in data/oom_runs.csv: the runs of this heap size narrow the
 bracket [highest PASS, lowest FAIL] first; without them the frontier of the previous heap sizes of the
-combination is extrapolated by its trend (more heap never gives fewer rows), without a history of its own
-the frontier of another combination is taken. The first run is at that guess. A PASS moves the search
+combination is extrapolated by its trend (more heap never gives fewer rows) and averaged with the result
+of every other combination at this heap size (moved by its usual distance from this one); the guess is not
+lower than a PASS of another combination at this heap size. Without a history of its own the result of
+another combination is taken. The first run is at that guess. A PASS moves the search
 up, a FAIL down, by --window (the step is wider when the frontier moved faster between the last heap
 sizes) and doubling, until the frontier is bracketed, then the bracket is halved down to --precision. Without
 any recorded run the first step searches --rows-low..--rows-high by halving. The result of a step is the
@@ -287,13 +289,43 @@ class Progress:
 
 def first_guess(args, state, combo, others, heap):
     """The start of the search of a step from the recorded runs: (row count of the first run, first step), None when
-    nothing is recorded. The history of the combination goes first, then the latest result of another one."""
-    found = estimates(state.heap_runs(combo), heap)
+    nothing is recorded.
+
+    Candidates: the own trend of the combination (predict_start) and, for every other combination that has a full
+    bracket at this very heap size, the middle of that bracket moved by the usual distance between the two (at the
+    last heap size where both have one). The guess is their average. A PASS of another combination at this heap size
+    is not to be probed below: the guess is not lower than the highest of them. Without any of this the latest result
+    of another combination starts the search."""
+    own = estimates(state.heap_runs(combo), heap)
+    base = predict_start(own, heap, args.window)
+    own_full = {h: e for h, e, kind in own if kind == "full"}
+    candidates = [base[0]] if base else []
+    highest_pass = None
     for other in others:
-        if found:
-            break
-        found = estimates(state.heap_runs(other), heap + 1)[-1:]       # its latest, also at this very heap size
-    return predict_start(found, heap, args.window)
+        runs = state.heap_runs(other)
+        p, f = bracket(runs.get(heap, {}))
+        if p is not None:
+            highest_pass = p if highest_pass is None else max(highest_pass, p)
+        if p is None or f is None:
+            continue
+        theirs = {h: e for h, e, kind in estimates(runs, heap) if kind == "full"}
+        common = [h for h in own_full if h in theirs]
+        offset = own_full[max(common)] - theirs[max(common)] if common else 0
+        candidates.append((p + f) / 2 + offset)
+    if not candidates:
+        for other in others:                       # nothing of its own and nothing of the others at this heap size
+            found = estimates(state.heap_runs(other), heap + 1)[-1:]
+            if found:
+                base = predict_start(found, heap, args.window)
+                candidates = [base[0]]
+                break
+    if not candidates:
+        return None
+    guess = round(sum(candidates) / len(candidates))
+    if highest_pass is not None:
+        guess = max(guess, highest_pass)
+    step = max(base[1] if base else args.window, round((max(candidates) - min(candidates)) / 2))
+    return guess, step
 
 
 def run_step(args, combo, heap, runner, state, progress, log=print, others=()):
