@@ -17,7 +17,9 @@ bracket [highest PASS, lowest FAIL] first; without them the frontier of the prev
 combination is extrapolated by its trend (more heap never gives fewer rows) and averaged with the result
 of every other combination at this heap size (moved by its usual distance from this one); the guess is not
 lower than a PASS of another combination at this heap size. Without a history of its own the result of
-another combination is taken. The first run is at that guess. A PASS moves the search
+another combination is taken. The first run is at that guess; runs upwards do not go beyond a FAIL of
+another combination at this heap size (the first of them goes there at most), and halving a bracket
+does not run below a PASS of another combination inside it (the run goes to that PASS). A PASS moves the search
 up, a FAIL down, by --window (the step is wider when the frontier moved faster between the last heap
 sizes) and doubling, until the frontier is bracketed, then the bracket is halved down to --precision. Without
 any recorded run the first step searches --rows-low..--rows-high by halving. The result of a step is the
@@ -136,14 +138,23 @@ def search(run, lo, hi, precision, floor, ceil):
         return Result("RANGE", pass_max, fail_min)
 
 
-def search_guided(run, lo, hi, guess, step, precision, floor, ceil):
+def search_guided(run, lo, hi, guess, step, precision, floor, ceil, cap=None, hints=()):
     """The search of a step that starts from what is known: `lo` is the highest known PASS and `hi` the lowest
     known FAIL (millions of rows, None when unknown), `guess` the predicted frontier where the first run goes.
 
     An unknown end is found by moving from the known one by `step`, doubling it after every run in the same
-    direction (PASS up, FAIL down), up to `ceil` / `floor`: ALL_PASS / ALL_FAIL. Then the bracket is halved."""
+    direction (PASS up, FAIL down), up to `ceil` / `floor`: ALL_PASS / ALL_FAIL. Then the bracket is halved.
+
+    `cap` is a row count where another combination already failed at this heap size: the first runs upwards do not
+    go beyond it (a run at the cap itself does; if that passes, the cap is gone and the search goes on above it).
+
+    `hints` are row counts where another combination passed at this heap size. When halving the bracket, a run below
+    such a PASS is expected to pass and tells little, so the run goes to the highest hint inside the bracket instead of
+    its middle."""
     if guess is not None:
         guess = min(max(guess, floor), ceil)
+        if cap is not None and (lo is None or cap > lo):
+            guess = min(guess, cap)
     # the first run is the guess; with an end already known the guess is still the first thing to try on the open side
     # (a recorded PASS at 558M and a guess of 638M: the next run is 638M, not 558M plus a doubling step)
     if guess is not None and ((lo is None and hi is None) or (hi is None and guess > lo) or (lo is None and guess < hi)):
@@ -156,8 +167,15 @@ def search_guided(run, lo, hi, guess, step, precision, floor, ceil):
         if lo >= ceil:
             return Result("ALL_PASS", pass_max=lo)
         nxt = min(lo + move, ceil)
+        clipped = cap is not None and lo < cap < nxt
+        if clipped:
+            nxt = cap
         if run(nxt) == PASS:
-            lo, move = nxt, move * 2
+            lo = nxt
+            if cap is not None and lo >= cap:
+                cap = None                              # passed where the other failed: nothing to hold on to
+            if not clipped:
+                move *= 2                               # a step shortened by the cap says nothing about the distance
         else:
             hi = nxt
     move = step
@@ -171,6 +189,7 @@ def search_guided(run, lo, hi, guess, step, precision, floor, ceil):
             lo = nxt
     while hi - lo > precision:
         mid = (lo + hi) // 2
+        mid = max([mid] + [h for h in hints if mid < h < hi])
         if run(mid) == PASS:
             lo = mid
         else:
@@ -287,7 +306,7 @@ class Progress:
         self.finished = False    # nothing fails any more: larger heaps pass too
 
 
-def first_guess(args, state, combo, others, heap):
+def first_guess(args, state, combo, others, heap, notes=None):
     """The start of the search of a step from the recorded runs: (row count of the first run, first step), None when
     nothing is recorded.
 
@@ -295,11 +314,14 @@ def first_guess(args, state, combo, others, heap):
     bracket at this very heap size, the middle of that bracket moved by the usual distance between the two (at the
     last heap size where both have one). The guess is their average. A PASS of another combination at this heap size
     is not to be probed below: the guess is not lower than the highest of them. Without any of this the latest result
-    of another combination starts the search."""
+    of another combination starts the search. `notes`, if given, gets the parts of the guess for the log."""
+    notes = [] if notes is None else notes
     own = estimates(state.heap_runs(combo), heap)
     base = predict_start(own, heap, args.window)
     own_full = {h: e for h, e, kind in own if kind == "full"}
     candidates = [base[0]] if base else []
+    if base:
+        notes.append(f"own trend {base[0]}M")
     highest_pass = None
     for other in others:
         runs = state.heap_runs(other)
@@ -312,20 +334,34 @@ def first_guess(args, state, combo, others, heap):
         common = [h for h in own_full if h in theirs]
         offset = own_full[max(common)] - theirs[max(common)] if common else 0
         candidates.append((p + f) / 2 + offset)
+        notes.append(f"{other.version} {other.image} {(p + f) / 2:g}M {offset:+g}M = {candidates[-1]:g}M")
     if not candidates:
         for other in others:                       # nothing of its own and nothing of the others at this heap size
             found = estimates(state.heap_runs(other), heap + 1)[-1:]
             if found:
                 base = predict_start(found, heap, args.window)
                 candidates = [base[0]]
+                notes.append(f"latest result of {other.version} {other.image} {base[0]}M")
                 break
     if not candidates:
         return None
     guess = round(sum(candidates) / len(candidates))
-    if highest_pass is not None:
-        guess = max(guess, highest_pass)
+    if highest_pass is not None and highest_pass > guess:
+        notes.append(f"raised to the PASS {highest_pass}M of another combination at this heap")
+        guess = highest_pass
     step = max(base[1] if base else args.window, round((max(candidates) - min(candidates)) / 2))
     return guess, step
+
+
+def sibling_fail_cap(state, others, heap):
+    """The lowest FAIL of the other combinations at this heap size, None when none of them has failed there."""
+    fails = [bracket(state.heap_runs(other).get(heap, {}))[1] for other in others]
+    return min((f for f in fails if f is not None), default=None)
+
+
+def sibling_passes(state, others, heap):
+    """The row counts where the other combinations passed at this heap size."""
+    return sorted({r for other in others for r, outcome in state.heap_runs(other).get(heap, {}).items() if outcome == PASS})
 
 
 def run_step(args, combo, heap, runner, state, progress, log=print, others=()):
@@ -336,12 +372,17 @@ def run_step(args, combo, heap, runner, state, progress, log=print, others=()):
         progress.finished = done["Status"] == "ALL_PASS"
         return
     lo, hi = bracket(state.heap_runs(combo).get(heap, {}))
-    guess = first_guess(args, state, combo, others, heap)
+    notes = []
+    guess = first_guess(args, state, combo, others, heap, notes)
+    cap = sibling_fail_cap(state, others, heap)
+    if cap is not None and (lo is None or cap > lo):
+        notes.append(f"runs upwards stop at {cap}M, where another combination failed")
     start, step = guess if guess else (None, args.window)
     if lo is not None or hi is not None:
-        log(f"### {combo.version} {combo.image} heap={heap}: recorded runs give PASS up to {lo or '-'}M, FAIL from {hi or '-'}M")
+        log(f"### {combo.version} {combo.image} heap={heap}: recorded runs give PASS up to {lo or '-'}M, FAIL from {hi or '-'}M"
+            + (f"; guess {start}M, step {step}M ({'; '.join(notes)})" if guess else ""))
     elif guess:
-        log(f"### {combo.version} {combo.image} heap={heap}: first run at {start}M (from the recorded runs), step {step}M")
+        log(f"### {combo.version} {combo.image} heap={heap}: first run at {start}M, step {step}M ({'; '.join(notes)})")
     else:
         log(f"### {combo.version} {combo.image} heap={heap}: nothing recorded, searching {args.rows_low}M..{args.rows_high}M")
 
@@ -362,7 +403,8 @@ def run_step(args, combo, heap, runner, state, progress, log=print, others=()):
         if lo is None and hi is None and not guess:
             result = search(run, args.rows_low, args.rows_high, args.precision, args.rows_low, args.rows_high)
         else:
-            result = search_guided(run, lo, hi, start, step, args.precision, args.rows_low, args.rows_high)
+            result = search_guided(run, lo, hi, start, step, args.precision, args.rows_low, args.rows_high, cap,
+                                   sibling_passes(state, others, heap))
     except StepSkipped as e:
         progress.skipped += 1
         log(f"    heap={heap} skipped: the run at {e} ended with an error that is not a heap OOM "

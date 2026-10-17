@@ -454,3 +454,84 @@ def test_a_real_case_the_next_run_after_a_pass_at_558(tmp_path):
     o.run_all(make_args(tmp_path, heap_start=576, heap_max=576, window=10, precision=20), [old, new],
               lambda c: runner, state, log=lambda *a: None)
     assert calls[0] == 678 and 818 not in calls
+
+
+def guided_cap(limit, lo, guess, step, cap, precision=20):
+    calls = []
+
+    def run(rows):
+        calls.append(rows)
+        return o.PASS if rows < limit else o.FAIL
+    return o.search_guided(run, lo, None, guess, step, precision, 10, 1440, cap), calls
+
+
+def test_a_cap_stops_the_first_run_upwards_at_the_fail_of_another_combination():
+    """PASS at 678M is known, the step is 130M, another combination failed at 698M: the next run is 698M, not 808M."""
+    r, calls = guided_cap(limit=690, lo=678, guess=None, step=130, cap=698)
+    assert calls == [698] and (r.pass_max, r.fail_min) == (678, 698)
+
+
+def test_a_cap_that_was_passed_is_gone_and_the_step_after_it_is_not_doubled():
+    r, calls = guided_cap(limit=800, lo=678, guess=None, step=130, cap=698)
+    assert calls[:2] == [698, 828] and r.pass_max < 800 <= r.fail_min       # 698 passed: back to the own step of 130M
+
+
+def test_a_cap_below_a_known_pass_is_ignored_and_the_guess_is_held_at_the_cap():
+    r, calls = guided_cap(limit=1000, lo=700, guess=None, step=130, cap=698)    # the other failed below our PASS
+    assert calls[0] == 830
+    calls = []
+    o.search_guided(lambda rows: (calls.append(rows), o.PASS if rows < 600 else o.FAIL)[1], None, None, 800, 130, 20, 10, 1440, 698)
+    assert calls[0] == 698                                                       # a guess above the cap is brought to it
+
+
+def test_the_real_case_goes_to_678_and_then_698_and_nothing_above(tmp_path):
+    rows = history_rows([(658, "PASS"), (698, "FAIL"), (678, "PASS")]) + [(*OWN, 576, r, "PASS") for r in (388, 408, 428, 558)]
+    state = sibling_state(tmp_path, rows)
+    old, new = package_combo(*SIB), package_combo(*OWN)
+    assert o.sibling_fail_cap(state, [old], 576) == 698 and o.sibling_fail_cap(state, [new], 576) is None
+    calls = []
+    runner = FakeRunner(lambda heap: 690)
+    runner.run = lambda heap, rows, run=runner.run: (calls.append(rows), run(heap, rows))[1]
+    o.run_all(make_args(tmp_path, heap_start=576, heap_max=576, window=10, precision=20), [old, new],
+              lambda c: runner, state, log=lambda *a: None)
+    assert calls == [678, 698]                                                   # two runs, bracket [678, 698]
+
+
+def test_halving_a_bracket_goes_to_the_highest_sibling_pass_inside_it():
+    """Own PASS at 558M, own FAIL at 678M; the sibling passed at 658M and 678M. The middle 618M is below a PASS of the sibling,
+    so the run goes to 658M; a PASS there closes the bracket [658, 678] (precision 20) with one run."""
+    calls = []
+
+    def run(rows):
+        calls.append(rows)
+        return o.PASS if rows < 670 else o.FAIL
+    r = o.search_guided(run, 558, 678, None, 130, 20, 10, 1440, None, [658, 678])
+    assert calls == [658] and (r.pass_max, r.fail_min) == (658, 678)
+    calls.clear()
+    run2 = lambda rows: (calls.append(rows), o.PASS if rows < 600 else o.FAIL)[1]       # a FAIL at 658M: halving goes on below
+    r = o.search_guided(run2, 558, 678, None, 130, 20, 10, 1440, None, [658, 678])
+    assert calls[0] == 658 and calls[1] == 608 and r.pass_max < 600 <= r.fail_min
+
+
+def test_a_sibling_pass_outside_the_bracket_changes_nothing():
+    calls = []
+
+    def run(rows):
+        calls.append(rows)
+        return o.PASS if rows < 640 else o.FAIL
+    o.search_guided(run, 558, 678, None, 130, 20, 10, 1440, None, [400, 700])
+    assert calls[0] == 618
+
+
+def test_the_real_case_after_a_fail_at_678_the_next_run_is_the_sibling_pass_658(tmp_path):
+    rows = history_rows([(658, "PASS"), (698, "FAIL"), (678, "PASS")]) + \
+        [(*OWN, 576, r, "PASS") for r in (388, 408, 428, 558)] + [(*OWN, 576, 678, "FAIL")]
+    state = sibling_state(tmp_path, rows)
+    old, new = package_combo(*SIB), package_combo(*OWN)
+    assert o.sibling_passes(state, [old], 576) == [658, 678]
+    calls = []
+    runner = FakeRunner(lambda heap: 670)
+    runner.run = lambda heap, rows, run=runner.run: (calls.append(rows), run(heap, rows))[1]
+    o.run_all(make_args(tmp_path, heap_start=576, heap_max=576, window=10, precision=20), [old, new],
+              lambda c: runner, state, log=lambda *a: None)
+    assert calls == [658]
