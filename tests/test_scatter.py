@@ -4,28 +4,6 @@ import pytest
 from report import scatter
 
 
-@pytest.mark.parametrize("text, value", [("100K", 1e5), ("1.44G", 1.44e9), ("10m", 1e7), ("2.5", 2.5), (" 4096 ", 4096)])
-def test_parse_value(text, value):
-    assert scatter.parse_value(text) == pytest.approx(value)
-
-
-@pytest.mark.parametrize("text", ["", "abc", "42 + CTAS", "10T"])
-def test_parse_value_rejects(text):
-    with pytest.raises(ValueError):
-        scatter.parse_value(text)
-
-
-@pytest.mark.parametrize("value, text", [(1.44e9, "1.44G"), (100000, "100K"), (10**7, "10M"), (4096, "4096"), (7.5, "7.5")])
-def test_format_value(value, text):
-    assert scatter.format_value(value) == text
-
-
-def test_nice_ticks_are_round_and_inside_the_range():
-    ticks = scatter.nice_ticks(0, 1_440_000_000)
-    assert 5 <= len(ticks) <= 12 and ticks[0] == 0 and ticks[-1] <= 1_440_000_000
-    assert len({round(b - a) for a, b in zip(ticks, ticks[1:])}) == 1
-
-
 def test_chart_colours_points_by_verdict(tmp_path):
     csv_path = tmp_path / "r.csv"
     csv_path.write_text("rows,heap,verdict\n10M,1024,PASS\n1.44G,512,fail\n5M,x,PASS\n1M,64,UNFINISHED\n")

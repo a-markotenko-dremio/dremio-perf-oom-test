@@ -47,3 +47,13 @@ def test_parse_rows_rejects_fractions_of_a_row_and_names_the_rows_in_the_message
         results_report.parse_rows("abc")
     with pytest.raises(ValueError, match="not a whole number"):
         results_report.parse_rows("1.0000005M")
+
+
+@pytest.mark.parametrize("text, value", [("100K", 1e5), ("1.44G", 1.44e9), ("-2.5", -2.5), (" 4096 ", 4096.0)])
+def test_parse_number_is_a_signed_float(text, value):
+    assert quantities.parse_number(text) == pytest.approx(value) and isinstance(quantities.parse_number(text), float)
+
+
+def test_parse_number_rejects_what_is_not_a_number():
+    with pytest.raises(ValueError):
+        quantities.parse_number("42 + CTAS")

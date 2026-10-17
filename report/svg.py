@@ -14,7 +14,7 @@ from html import escape
 
 import results_report
 from .runs import by_heap, frontier
-from .canvas import (CSS, DARK, LEFT, LIGHT, PW, SERIES, W, Svg, fmt_mb, nice_ticks,
+from .canvas import (LEFT, LIGHT, MB_STEPS, PW, SERIES, SERIES_DARK_CSS, Svg, document, fmt_mb, nice_ticks,
                      section_header, y_axis)
 
 
@@ -37,7 +37,7 @@ def section_frontier(svg, y, data, versions):
     step = PW / len(all_rows)
     px = lambda rows: LEFT + (all_rows.index(rows) + 0.5) * step
     py = lambda h: top + ph - (h - lo) / (hi - lo) * ph
-    y_axis(svg, top, ph, lo, hi, nice_ticks(lo, hi), fmt_mb, "heap, MB")
+    y_axis(svg, top, ph, lo, hi, nice_ticks(lo, hi, steps=MB_STEPS), fmt_mb, "heap, MB")
     for rows in all_rows:
         svg.text(px(rows), top + ph + 20, results_report.format_rows(rows), anchor="middle")
     svg.text(LEFT + PW / 2, top + ph + 42, "rows processed", anchor="middle")
@@ -102,7 +102,7 @@ def section_pass_rate(svg, y, data, versions):
         px = lambda h: LEFT + (h - x0) / (x1 - x0) * PW
         py = lambda r: top + ph - r * ph
         y_axis(svg, top, ph, 0, 1, [0, 0.5, 1], lambda v: f"{v:.0%}", "pass rate")
-        for h in nice_ticks(x0, x1, 12):
+        for h in nice_ticks(x0, x1, 12, MB_STEPS):
             svg.text(px(h), top + ph + 18, fmt_mb(h), anchor="middle")
         svg.text(LEFT + PW / 2, top + ph + 38, "heap, MB", anchor="middle")
         n = len(versions)
@@ -198,11 +198,4 @@ def render(data, rams):
     y = section_frontier(svg, y, data, versions)
     y = section_pass_rate(svg, y, data, versions)
     y = section_heatmap(svg, y, data, versions)
-    H = y + 10
-    head = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H:.0f}" width="{W}" height="{H:.0f}" '
-            f'role="img" fill="{LIGHT["ink2"]}" aria-label="PASS/FAIL analysis of the Dremio memory tests">')
-    dark = [s[1] for s in SERIES]
-    series_dark = "".join(f"  .f{i} {{ fill: {c} }} .s{i} {{ stroke: {c} }}\n" for i, c in enumerate(dark))
-    style = "<style>" + CSS % {**DARK, "series": series_dark} + "</style>"
-    bg = f'<rect width="{W}" height="{H:.0f}" fill="{LIGHT["surface"]}" class="bg"/>'
-    return "\n".join([head, style, bg, *svg.parts, "</svg>"])
+    return document(svg.parts, y + 10, "PASS/FAIL analysis of the Dremio memory tests", SERIES_DARK_CSS)

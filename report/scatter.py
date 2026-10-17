@@ -10,46 +10,14 @@ Rows whose X or Y is not a number, or whose verdict is neither PASS nor FAIL, ar
     python3 -m report.scatter data/test_results.csv Rows DREMIO_MAX_HEAP_MEMORY_SIZE_MB Verdict
 """
 import argparse
-import math
 import sys
-from html import escape
 
 import csvio
-import quantities
-from .canvas import CSS, DARK, LEFT, LIGHT, PW, W, Svg, y_axis
+from quantities import parse_number
+from .canvas import LEFT, LIGHT, PW, Svg, document, format_tick, nice_ticks, pad_range, scale, x_axis, y_axis
 
 COLORS = {"PASS": ("#1a9850", "#3dbb6f"), "FAIL": ("#d73027", "#f06b5f")}  # light, dark theme
 PH, TOP = 460, 90
-
-
-def parse_value(text):
-    """'100K' -> 100000.0, '1.44G' -> 1440000000.0, '2.5' -> 2.5. ValueError for anything else."""
-    return float(quantities.parse_quantity(text, signed=True))
-
-
-def format_value(v):
-    """The inverse of parse_value for axis labels: 1440000000 -> '1.44G', 100000 -> '100K', 4096 -> '4096'."""
-    return quantities.format_quantity(v, exact=True)
-
-
-def nice_ticks(lo, hi, want=8):
-    """Round values (1, 2 or 5 times a power of ten) between lo and hi, about `want` of them."""
-    span = hi - lo
-    raw = span / want
-    mag = 10 ** math.floor(math.log10(raw))
-    step = next(m * mag for m in (1, 2, 5, 10) if m * mag >= raw)
-    first = math.ceil(lo / step - 1e-9) * step
-    ticks, i = [], 0
-    while first + i * step <= hi + step * 1e-9:
-        ticks.append(round(first + i * step, 10))
-        i += 1
-    return ticks
-
-
-def pad_range(values):
-    lo, hi = min(values), max(values)
-    pad = (hi - lo) * 0.06 or (abs(hi) * 0.1 or 1)
-    return lo - pad, hi + pad
 
 
 def column_index(header, name):
@@ -76,47 +44,36 @@ def load(path, x_spec, y_spec, v_spec):
             verdict = r[vi].strip().upper()
             if verdict not in COLORS:
                 raise ValueError(verdict)
-            points.append((parse_value(r[xi]), parse_value(r[yi]), verdict, n))
+            points.append((parse_number(r[xi]), parse_number(r[yi]), verdict, n))
         except (ValueError, IndexError):
             skipped += 1
     return points, skipped, tuple(header[i].strip() for i in (xi, yi, vi))
 
 
 def render(points, names, title):
-    xs, ys = [p[0] for p in points], [p[1] for p in points]
-    xlo, xhi = pad_range(xs)
-    ylo, yhi = pad_range(ys)
-    px = lambda x: LEFT + (x - xlo) / (xhi - xlo) * PW
-    py = lambda y: TOP + PH - (y - ylo) / (yhi - ylo) * PH
+    xlo, xhi = pad_range([p[0] for p in points])
+    ylo, yhi = pad_range([p[1] for p in points])
+    to_x, to_y = scale(xlo, xhi, LEFT, PW), scale(ylo, yhi, TOP + PH, -PH)
 
     svg = Svg()
     svg.text(LEFT, 30, title, "title ttl")
     counts = {v: sum(1 for p in points if p[2] == v) for v in COLORS}
     lx = LEFT
     for v in COLORS:
-        svg.add(f'<circle cx="{lx + 6}" cy="52" r="5.5" fill="{COLORS[v][0]}" class="p{v}"/>')
+        svg.shape(0, lx + 6, 52, 5.5, f'fill="{COLORS[v][0]}" class="p{v}"')
         svg.text(lx + 18, 56, f"{v} ({counts[v]})")
         lx += 110
-    y_axis(svg, TOP, PH, ylo, yhi, nice_ticks(ylo, yhi), format_value, names[1])
-    for t in nice_ticks(xlo, xhi):
-        svg.line(px(t), TOP, px(t), TOP + PH, "grid", LIGHT["grid"])
-        svg.text(px(t), TOP + PH + 20, format_value(t), anchor="middle")
-    svg.text(LEFT + PW / 2, TOP + PH + 44, names[0], anchor="middle")
+    y_axis(svg, TOP, PH, ylo, yhi, nice_ticks(ylo, yhi, 8), format_tick, names[1])
+    x_axis(svg, TOP, PH, to_x, nice_ticks(xlo, xhi, 8), format_tick, names[0])
     # FAIL last: a failure must not be hidden under a pass at the same spot; both stay visible (opacity)
     for verdict in ("PASS", "FAIL"):
         for x, y, v, n in points:
             if v == verdict:
-                svg.add(f'<circle cx="{px(x):.1f}" cy="{py(y):.1f}" r="6" fill="{COLORS[v][0]}" class="p{v}" '
-                        f'fill-opacity="0.8" stroke="{LIGHT["surface"]}" stroke-width="1.5">'
-                        f'<title>{escape(f"{names[0]} {format_value(x)}, {names[1]} {format_value(y)}: {v} (line {n})")}</title></circle>')
-
-    H = TOP + PH + 64
-    head = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" '
-            f'role="img" fill="{LIGHT["ink2"]}" aria-label="{escape(title)}">')
+                svg.shape(0, to_x(x), to_y(y), 6, f'fill="{COLORS[v][0]}" class="p{v}" fill-opacity="0.8" '
+                          f'stroke="{LIGHT["surface"]}" stroke-width="1.5"',
+                          f"{names[0]} {format_tick(x)}, {names[1]} {format_tick(y)}: {v} (line {n})")
     dark_points = "".join(f"  .p{v} {{ fill: {c[1]} }}\n" for v, c in COLORS.items())
-    style = "<style>" + CSS % {**DARK, "series": dark_points} + "</style>"
-    bg = f'<rect width="{W}" height="{H}" fill="{LIGHT["surface"]}" class="bg"/>'
-    return "\n".join([head, style, bg, *svg.parts, "</svg>"])
+    return document(svg.parts, TOP + PH + 64, title, dark_points)
 
 
 def main(argv=None):

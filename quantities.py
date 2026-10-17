@@ -16,6 +16,11 @@ def parse_quantity(text, signed=False):
     return Decimal(m.group(1)) * _FACTOR[m.group(2)]
 
 
+def parse_number(text):
+    """Like parse_quantity, a signed value as a float: '100K' -> 100000.0, '-2.5' -> -2.5."""
+    return float(parse_quantity(text, signed=True))
+
+
 def format_quantity(value, exact=False):
     """The inverse of parse_quantity: 1440000000 -> '1.44G', 100000 -> '100K', 999 -> '999'.
 
