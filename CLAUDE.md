@@ -4,8 +4,6 @@ Project: performance tests of Dremio (OOM frontier search, deployment into Incus
 
 Run the tests (offline, no Dremio needed): `.venv/bin/python -m pytest tests`
 
-The general rules (language, DRY, SDLC) are in `~/.claude/CLAUDE.md` and apply here. Below is only what is specific to this project.
-
 ## Where the shared code is
 
 - Before writing code, search what exists: `scripts/lib/*.sh`, `results_report.py`, `settings.py`, `report/canvas.py`, `quantities.py`, `csvio.py`, `defaults.py`, `oom/`.
