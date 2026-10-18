@@ -43,8 +43,9 @@ Files (resumable: what is recorded is not run again; --retry-errors runs ERROR r
   data/test_results.csv  the usual row of every test run (REPORT_CSV)
 Disk: the storage of a combination (<storage-root>/<container name>: the test tables and, after a failed run, a
 half-written output table of tens of GB) is deleted together with its container before every deployment and
-when a step is done. The shared data blocks (<storage-root>/blocks) are never touched. --clean-stale also deletes the
-storages of containers that do not exist any more (left by runs that were killed).
+when a run is done. The shared data blocks (<storage-root>/blocks) are never touched. At the start the script also
+deletes the storages of containers that do not exist any more (left by runs that were killed; with --plan it only lists
+them). Run only one instance per storage root: the storage of a run that is just starting has no container yet.
 Run with PLAN=1 or --plan to see the combinations, the heap sizes and what is already recorded.
 """
 import argparse
@@ -88,9 +89,6 @@ def parse_args(argv=None):
     ap.add_argument("--storage-root", default=str(defaults.STORAGE_ROOT), help="a combination stores its data in <root>/<container name>")
     ap.add_argument("--ranges-csv", default=str(defaults.DATA_DIR / "oom_ranges.csv"), help="output for the chart, written from the runs")
     ap.add_argument("--runs-csv", default=str(defaults.DATA_DIR / "oom_runs.csv"))
-    ap.add_argument("--clean-stale", action="store_true",
-                    help="first delete the storages <storage-root>/d<version>-...-<N>G-<N>cpu of containers that do not exist any more "
-                         "(with --plan: only list them)")
     ap.add_argument("--plan", action="store_true", help="only print what would run")
     args = ap.parse_args(argv)
     if os.environ.get("PLAN"):
@@ -132,8 +130,7 @@ def main(argv=None):
     for combo in combos:
         recorded = sum(1 for h in heaps if (state.step(combo, h) or Result("ROUGH")).done)
         print(f"  {combo.version:<12} {combo.image:<24} {recorded}/{len(heaps)} steps recorded")
-    if args.clean_stale:
-        clean_stale(args)
+    clean_stale(args)
     if args.plan:
         return
     state.write_ranges()
