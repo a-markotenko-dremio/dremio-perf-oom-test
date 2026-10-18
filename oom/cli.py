@@ -6,10 +6,11 @@
 Combinations: every Dremio package x every Java image (by default Dremio 26.1.8 and 26.1.10 x
 eclipse-temurin:21-jdk and wolfi-jdk:21 = 4), each in its own container of --container-mb with
 --direct-mb of direct memory and --cpus CPUs. All combinations walk the heap sizes together. At every heap
-size they take turns, one run each: first until every combination has a PASS and a FAIL (the middle of them
-is already written to oom_ranges.csv as a ROUGH result), then, again one run each, until every one has
-reached --precision (a combination that has is skipped). Then the next heap size follows. Every run of
-a combination is made in a new container, because the next run is of another combination.
+size each combination first runs until it has a PASS and a FAIL (as many runs as that takes), one combination after
+the other; the middle of them is written to oom_ranges.csv as a ROUGH result at once. When all have a bracket,
+the combinations take turns, one run each, until every one has reached --precision (a combination that has
+is skipped). Then the next heap size follows. A combination keeps its container while it runs on; the next
+combination gets a new one.
 
 The heap grows from --heap-start by --heap-step (512, 576, 640, ... MB) until it reaches the memory
 of the container (container - direct - --reserve-mb) or, for a combination, until the test passes

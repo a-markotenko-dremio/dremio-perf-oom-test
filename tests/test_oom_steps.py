@@ -86,7 +86,8 @@ def test_all_combinations_do_each_heap_size_together(tmp_path):
         sorted((c.version, c.image, str(h)) for c in combos for h in (512, 576, 640, 704, 768))
     heaps_in_run_order = [h for _, h in dict.fromkeys(order)]
     assert heaps_in_run_order == sorted(heaps_in_run_order)      # heap by heap
-    assert len(deleted) == len(order)               # the container of every run is deleted when the run is done: one at a time
+    switches = 1 + sum(1 for x, y in zip(order, order[1:]) if x[0] != y[0])
+    assert switches <= len(deleted) <= len(order)   # a container is deleted when the turn goes to another combination
 
 
 def test_a_combination_that_only_passes_drops_out_the_others_go_on(tmp_path):
@@ -213,3 +214,20 @@ def test_the_refining_runs_take_turns_and_a_combination_at_its_precision_is_skip
     finished_at = {c: max(i for i, x in enumerate(runs) if x["Java image"] == c) for c in "ab"}
     assert min(finished_at.values()) < max(finished_at.values())      # one finished and was skipped while the other went on
     assert all(r["Status"] == "RANGE" for r in read(tmp_path / "ranges.csv"))
+
+
+def test_a_combination_runs_until_it_has_a_pass_and_a_fail_before_the_next_one_starts(tmp_path):
+    args = make_args(tmp_path, heap_max=512)
+    combos = combos4()[:3]
+    limits = {combos[0]: 300, combos[1]: 650, combos[2]: 120}
+    sp.run_all(args, combos, FakeFleet(lambda c, heap: limits[c], [], []), make_state(tmp_path, args), log=lambda *a: None)
+    runs = read(tmp_path / "runs.csv")
+    first_refined = brackets_over_time(runs).index(True)
+    blocks = []                                                     # the runs of the bracketing pass, one block per combination
+    for r in runs[:first_refined]:
+        key = (r["Dremio ver"], r["Java image"])
+        if not blocks or blocks[-1][0] != key:
+            blocks.append((key, set()))
+        blocks[-1][1].add(r["Outcome"])
+    assert [k for k, _ in blocks] == list(dict.fromkeys(k for k, _ in blocks))        # no combination comes back
+    assert all(v == {m.PASS, m.FAIL} for _, v in blocks)                          # each stayed until it had both verdicts
