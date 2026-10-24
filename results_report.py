@@ -1,17 +1,22 @@
 """Appends one row per test run to a CSV with the same columns as 'Per tests OOM results'."""
-import csv
 import getpass
 import math
 import os
 import platform
-import re
 import socket
-from decimal import Decimal
-from pathlib import Path
+import time
 
-COLUMNS = ["Host src", "Data src", "Host dst", "Data dst", "Dremio ver", "JVM ver", "Host RAM", "CPUs",
+import csvio
+import quantities
+
+COLUMNS = ["Timestamp", "Host src", "Data src", "Host dst", "Data dst", "Dremio ver", "JVM ver", "Host RAM", "CPUs",
            "DREMIO_MAX_DIRECT_MEMORY_SIZE_MB", "DREMIO_MAX_HEAP_MEMORY_SIZE_MB", "Rows",
            "Duration (minutes)", "Verdict", "Run by"]
+
+
+def timestamp(t=None):
+    """'2026-10-16_03-18-11': the CSV column and the test_result_<timestamp>.log name use this same value."""
+    return time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(t))
 
 
 def host_name():
@@ -34,10 +39,10 @@ def host_ram():
 
 def parse_rows(text):
     """'10M' -> 10000000, '1.44G' -> 1440000000, '100K' -> 100000, '12345' -> 12345 (decimal units)."""
-    m = re.fullmatch(r"(\d+(?:\.\d+)?)([KMG]?)", str(text).strip().upper())
-    if not m:
-        raise ValueError(f"invalid row count {text!r}: use a number with an optional K/M/G suffix, e.g. 10M, 1.44G")
-    value = Decimal(m.group(1)) * {"": 1, "K": 10**3, "M": 10**6, "G": 10**9}[m.group(2)]
+    try:
+        value = quantities.parse_quantity(text)
+    except ValueError:
+        raise ValueError(f"invalid row count {text!r}: use a number with an optional K/M/G suffix, e.g. 10M, 1.44G") from None
     if value != value.to_integral_value():
         raise ValueError(f"row count {text!r} is not a whole number of rows")
     return int(value)
@@ -50,39 +55,13 @@ def cpus():
 
 def format_rows(n):
     """1440000000 -> '1.44G', 10000000 -> '10M', 100000 -> '100K'."""
-    for unit, size in (("G", 10**9), ("M", 10**6), ("K", 10**3)):
-        if n >= size:
-            return f"{n / size:.2f}".rstrip("0").rstrip(".") + unit
-    return str(n)
+    return quantities.format_quantity(n)
 
 
 def run_by():
     return os.environ.get("RUN_BY") or getpass.getuser()
 
 
-def _migrate(path):
-    """Rewrites a CSV written with an older column set to the current COLUMNS (new ones empty)."""
-    with path.open(newline="") as f:
-        reader = csv.DictReader(f)
-        if reader.fieldnames == COLUMNS:
-            return
-        old_rows = list(reader)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=COLUMNS, extrasaction="ignore", restval="")
-        w.writeheader()
-        w.writerows(old_rows)
-    tmp.replace(path)
-
-
 def append_row(path, row):
     """Appends `row` (a dict keyed by COLUMNS), writing the header when the file is new."""
-    path = Path(path)
-    new = not path.exists() or path.stat().st_size == 0
-    if not new:
-        _migrate(path)
-    with path.open("a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=COLUMNS)
-        if new:
-            w.writeheader()
-        w.writerow(row)
+    csvio.append_row(path, COLUMNS, row)

@@ -21,6 +21,7 @@ from pathlib import Path
 
 import duckdb
 
+import defaults
 import results_report
 
 BLOCK_ROWS = 10_000_000
@@ -119,7 +120,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--rows", type=results_report.parse_rows, required=True, metavar="N",
                     help="number of rows, e.g. 10000000, 10M or 1.44G")
-    ap.add_argument("--storage", default=os.environ.get("STORAGE_PATH", "/mnt/ubuntu-var/dremio"))
+    ap.add_argument("--storage", default=os.environ.get("STORAGE_PATH", defaults.STORAGE_ROOT))
     ap.add_argument("--blocks-dir", default=os.environ.get("BLOCKS_DIR"), metavar="DIR",
                     help="directory of blocks shared by several storages (default: $BLOCKS_DIR)")
     a = ap.parse_args()
