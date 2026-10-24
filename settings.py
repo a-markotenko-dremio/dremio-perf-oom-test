@@ -13,6 +13,11 @@
   PRE_SQL          optional ';'-separated statements run before the test body, e.g. to raise the parallelism:
                    "ALTER SYSTEM SET planner.width.max_per_node = 28; ALTER SYSTEM SET planner.width.max_per_query = 1000".
                    Use ALTER SYSTEM: every job is its own session, so ALTER SESSION would not reach the test body.
+  OOM_SOURCE       Dremio source with the tables of the fabric OOM repro (default defaults.OOM_REPRO_SOURCE)
+  OOM_CONTAINERS   comma separated containers of the repro cluster, host:container for one on another host
+                   (default: defaults.OOM_REPRO_COORDINATOR and the executor of defaults.py)
+  OOM_WIDTH        planner.width.max_per_node of the repro run (default 24, as in the master repro)
+  OOM_RESERVE_PCT  optional exec.spillable.operators.pct_free_memory_watermark of the repro run (Dremio default 20)
   REPORT_CSV       CSV the run is appended to (default data/test_results.csv); the traceback log of a failed run goes next to it
   HEAP_MB / DIRECT_MB / JVM_VERSION / JAVA_IMAGE / CONTAINER_RAM_MB / CONTAINER_CPUS
                    what the Dremio under test was configured with (set by deploy_dremio.sh and
@@ -53,5 +58,12 @@ def load_statements(filename, **params):
         text = text.replace("${%s}" % key, str(value))
     return split_statements(text)
 
+
+OOM_SOURCE = os.environ.get("OOM_SOURCE", defaults.OOM_REPRO_SOURCE)
+OOM_CONTAINERS = os.environ.get(
+    "OOM_CONTAINERS",
+    f"{defaults.OOM_REPRO_COORDINATOR},{defaults.OOM_REPRO_EXECUTOR_HOST}:{defaults.OOM_REPRO_EXECUTOR}").split(",")
+OOM_WIDTH = int(os.environ.get("OOM_WIDTH", "24"))
+OOM_RESERVE_PCT = os.environ.get("OOM_RESERVE_PCT")
 
 PRE_SQL = split_statements(os.environ.get("PRE_SQL", ""))

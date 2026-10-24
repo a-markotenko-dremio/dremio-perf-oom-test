@@ -90,6 +90,11 @@ class DremioClient:
                               json={"entityType": "source", "name": name, "type": "NAS", "config": config})
         assert r.ok, f"Cannot configure source {name} -> {path}: {r.status_code} {r.text}"
 
+    def entity_type(self, path):
+        """The catalog entityType at the path ("folder", "dataset", ...), or None when there is nothing."""
+        r = self._get(f"/api/v3/catalog/by-path/{'/'.join(path)}")
+        return r.json()["entityType"] if r.ok else None
+
     def unpromote_table(self, table_path):
         """Removes a table's Dremio metadata so its folder can be rebuilt."""
         existing = self._get(f"/api/v3/catalog/by-path/{'/'.join(table_path)}")
