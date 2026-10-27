@@ -1,4 +1,4 @@
-"""Offline tests of the log counting of test_fabric_oom_repro.py on log lines of the real repro (DX-127207, the customer's profile)."""
+"""Offline tests of the log reading of fabric_oom_repro.logs on log lines of the real repro (DX-127207, the customer's profile)."""
 import gzip
 import os
 import re
@@ -35,7 +35,7 @@ def container_logs(tmp_path, monkeypatch):
     incus.write_text('#!/bin/bash\nshift 3\nexec "$@"\n')
     incus.chmod(incus.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
-    monkeypatch.setattr(repro, "LOGS", f"{tmp_path}/server.log {tmp_path}/archive/server.*.log.gz")
+    monkeypatch.setattr(repro, "LOGS", repro.LOGS.replace("/opt/dremio/log", str(tmp_path)))
     return tmp_path
 
 
@@ -48,11 +48,20 @@ def test_lines_of_the_current_log_and_of_the_archive_are_counted(container_logs)
     assert repro.log_count("any", repro.PATTERNS["arbiter_cancel"]) == 1
 
 
+def test_the_archive_comes_before_the_current_log(container_logs):
+    """A roll at midnight moves lines to the archive: only this order keeps the lines a run already counted in place."""
+    (container_logs / "server.log").write_text(FABRIC_OOM[0] + "\n")
+    (container_logs / "archive").mkdir()
+    with gzip.open(container_logs / "archive" / "server.2026-10-22.1.log.gz", "wt") as f:
+        f.write(FABRIC_OOM[2] + "\n")
+    assert repro.log_lines("any", repro.PATTERNS["fabric_oom"]) == [FABRIC_OOM[2], FABRIC_OOM[0]]
+
+
 def test_a_log_without_matches_and_without_archive_counts_zero(container_logs):
     (container_logs / "server.log").write_text("INFO started\n")
     assert repro.log_count("any", repro.PATTERNS["fabric_oom"]) == 0
 
 
 def test_an_unreadable_log_is_an_error_not_a_zero(container_logs):
-    with pytest.raises(AssertionError, match="counting in any failed"):
+    with pytest.raises(AssertionError, match="reading the log of any failed"):
         repro.log_count("any", repro.PATTERNS["fabric_oom"])

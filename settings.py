@@ -18,6 +18,8 @@
                    (default: defaults.OOM_REPRO_COORDINATOR and the executor of defaults.py)
   OOM_WIDTH        planner.width.max_per_node of the repro run (default 24, as in the master repro)
   OOM_RESERVE_PCT  optional exec.spillable.operators.pct_free_memory_watermark of the repro run (Dremio default 20)
+  OOM_INNOCENT     1 runs the small query next to the 8 of the fix verification (default 0: with it the fabric OOM
+                   did not reproduce in 2 of 2 runs, without it in 5 of 5)
   REPORT_CSV       CSV the run is appended to (default data/test_results.csv); the traceback log of a failed run goes next to it
   HEAP_MB / DIRECT_MB / JVM_VERSION / JAVA_IMAGE / CONTAINER_RAM_MB / CONTAINER_CPUS
                    what the Dremio under test was configured with (set by deploy_dremio.sh and
@@ -65,5 +67,6 @@ OOM_CONTAINERS = os.environ.get(
     f"{defaults.OOM_REPRO_COORDINATOR},{defaults.OOM_REPRO_EXECUTOR_HOST}:{defaults.OOM_REPRO_EXECUTOR}").split(",")
 OOM_WIDTH = int(os.environ.get("OOM_WIDTH", "24"))
 OOM_RESERVE_PCT = os.environ.get("OOM_RESERVE_PCT")
+OOM_INNOCENT = os.environ.get("OOM_INNOCENT", "0") == "1"
 
 PRE_SQL = split_statements(os.environ.get("PRE_SQL", ""))
