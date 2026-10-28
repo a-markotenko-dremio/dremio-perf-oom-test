@@ -75,7 +75,7 @@ def test_current_rules_and_the_rules_of_other_hosts_are_not_touched(iptables):
 
 @pytest.fixture
 def stand_hosts(tmp_path):
-    """Fake incus and ssh: incus lists the running containers of CONTAINERS (name:device,...) and logs device additions;
+    """Fake incus and ssh: incus lists the running containers of CONTAINERS (name:device,...), says the devices mount MOUNTED and logs device changes;
     ssh runs the command locally."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -85,7 +85,8 @@ def stand_hosts(tmp_path):
             "list status=running") tr , "\\n" <<<"$CONTAINERS" | cut -d: -f1 | sort -u ;;
             "config device")
                 case "$3" in
-                    get) tr , "\\n" <<<"$CONTAINERS" | grep -qx "$4:$5" ;;
+                    get) grep -qx "$4:$5" < <(tr , "\\n" <<<"$CONTAINERS") && echo "$MOUNTED" ;;
+                    remove) echo "remove $4 $5" >> {log} ;;
                     add) echo "add $4 $5 $6 $7 $8 $9" >> {log} ;;
                 esac ;;
         esac''')
@@ -116,7 +117,22 @@ def test_a_stand_directory_is_mounted_once(stand_hosts, tmp_path):
     out = cluster_sh(f"CT=incus; NAME=d27-0-0-j21-14G-4cpu; mount_stand_dir fabric-oom-repro {data}", env)
     assert out.returncode == 0, out.stderr
     assert data.is_dir()
-    assert calls() == [f"add d27-0-0-j21-14G-4cpu fabric-oom-repro disk source={data} path={data} shift=true"]
+    assert [c for c in calls() if c.startswith("add")] == [
+        f"add d27-0-0-j21-14G-4cpu fabric-oom-repro disk source={data} path={data} shift=true"]
+    before = len(calls())
     env["CONTAINERS"] = "d27-0-0-j21-14G-4cpu:storage,d27-0-0-j21-14G-4cpu:fabric-oom-repro"
+    env["MOUNTED"] = str(data)
     cluster_sh(f"CT=incus; NAME=d27-0-0-j21-14G-4cpu; mount_stand_dir fabric-oom-repro {data}", env)
-    assert len(calls()) == 1
+    assert len(calls()) == before
+
+
+def test_a_device_mounting_another_directory_is_replaced(stand_hosts, tmp_path):
+    """A second stand uses a new dist directory: the device of the first stand would leave it unmounted."""
+    env, calls = stand_hosts
+    env["CONTAINERS"] = "d27-0-0-j21-14G-4cpu:fabric-oom-dist"
+    env["MOUNTED"] = "/mnt/ubuntu-var/nfs/shared/fabric-oom-dist/first"
+    new = tmp_path / "second"
+    out = cluster_sh(f"CT=incus; NAME=d27-0-0-j21-14G-4cpu; mount_stand_dir fabric-oom-dist {new}", env)
+    assert out.returncode == 0, out.stderr
+    assert calls() == ["remove d27-0-0-j21-14G-4cpu fabric-oom-dist",
+                       f"add d27-0-0-j21-14G-4cpu fabric-oom-dist disk source={new} path={new} shift=true"]
