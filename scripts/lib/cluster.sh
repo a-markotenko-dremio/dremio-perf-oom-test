@@ -58,11 +58,18 @@ configure_cluster_node() {
 # path need one path on all nodes) as devices; the data device also marks the containers of the stand.
 STAND_DATA_DEVICE=fabric-oom-repro
 
-# mount_stand_dir DEVICE DIR: mounts DIR into the container NAME at the same path, once.
+# mount_stand_dir DEVICE DIR: mounts DIR into the container NAME at the same path, once. A directory on NFS is mounted
+# without shift (idmapped mounts do not work on NFS): the container sees it with the permissions "other", so it is made
+# accessible to everyone.
 mount_stand_dir() {
     mkdir -p "$2"
-    $CT config device get "$NAME" "$1" source >/dev/null 2>&1 \
-        || $CT config device add "$NAME" "$1" disk source="$2" path="$2" shift=true
+    $CT config device get "$NAME" "$1" source >/dev/null 2>&1 && return
+    if [[ $(stat -f -c %T "$2") == nfs* ]]; then
+        chmod a+rwx "$2"
+        $CT config device add "$NAME" "$1" disk source="$2" path="$2"
+    else
+        $CT config device add "$NAME" "$1" disk source="$2" path="$2" shift=true
+    fi
 }
 
 # stand_node [HOST]: the running container of the stand on HOST (this host when omitted): the one with the data device.
