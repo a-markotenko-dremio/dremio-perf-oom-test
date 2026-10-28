@@ -1,9 +1,12 @@
-# Sourced by the run scripts: the repository root as the working directory, DREMIO_URL of the coordinator container,
-# STORAGE_PATH of the stand and OOM_DATA, the data set of the run: the one setup_fabric_oom_stand.sh generates unless
-# another directory of the storage is given (OOM_DATA=qa-oom-repro.other scripts/fabric_oom_repro/run_fabric_oom_repro.sh).
+# Sourced by the run scripts (make fabric-oom-repro / fabric-oom-func): the repository root as the working directory and
+# the environment of the tests: DREMIO_URL of the coordinator, OOM_CONTAINERS (both nodes of the stand, found by their
+# data device) and OOM_DATA, the data set of the run (the one of the stand unless OOM_DATA names another directory).
 REPO=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)
 source "$REPO/scripts/lib/common.sh"
+source "$REPO/scripts/lib/cluster.sh"
 cd "$REPO"
-NAME=$(default OOM_REPRO_COORDINATOR)
 detect_container_cli
-export DREMIO_URL=http://$(container_ip):9047 STORAGE_PATH=$(default OOM_REPRO_STORAGE) OOM_DATA=${OOM_DATA:-$(default OOM_REPRO_SUBDIR)}
+NAME=$(stand_node)
+EXECUTOR_HOST=$(default OOM_REPRO_EXECUTOR_HOST)
+export DREMIO_URL=http://$(container_ip):9047 OOM_CONTAINERS=$NAME,$EXECUTOR_HOST:$(stand_node "$EXECUTOR_HOST") \
+    OOM_DATA=${OOM_DATA:-$(default OOM_REPRO_DATA)}

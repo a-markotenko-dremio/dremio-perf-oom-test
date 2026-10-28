@@ -23,9 +23,9 @@ Run = namedtuple("Run", "outcomes innocent events summary")
 
 
 @pytest.fixture(scope="module")
-def run(dremio, tables, system_options):
+def run(dremio, tables, system_options, containers):
     """The workload, with the events it added to the logs of all containers merged in time order."""
-    before = {c: len(log_lines(c, fabric_oom.PATTERN)) for c in settings.OOM_CONTAINERS}
+    before = {c: len(log_lines(c, fabric_oom.PATTERN)) for c in containers}
     outcomes, innocent = run_workload(dremio, INNOCENT if settings.OOM_INNOCENT else None)
     events = fabric_oom.merge({c: fabric_oom.parse(log_lines(c, fabric_oom.PATTERN)[n:]) for c, n in before.items()})
     summary = (f"{describe(system_options, outcomes)}\n"

@@ -53,3 +53,26 @@ configure_cluster_node() {
         done
         systemctl restart dremio'
 }
+
+# The data sets of the fabric OOM stand are mounted into every node at their host path (a NAS source needs one path on
+# all nodes) as this device; the device also marks the containers of the stand.
+STAND_DATA_DEVICE=fabric-oom-repro
+
+# mount_stand_data DIR: mounts DIR into the container NAME at the same path, once.
+mount_stand_data() {
+    mkdir -p "$1"
+    $CT config device get "$NAME" "$STAND_DATA_DEVICE" source >/dev/null 2>&1 \
+        || $CT config device add "$NAME" "$STAND_DATA_DEVICE" disk source="$1" path="$1" shift=true
+}
+
+# stand_node [HOST]: the running container of the stand on HOST (this host when omitted): the one with the data device.
+stand_node() {
+    local script found
+    # the script ends with true: the status of the last `device get` must not fail the caller's set -e
+    printf -v script 'for n in $(%s list status=running -c n --format csv); do %s config device get "$n" %s source >/dev/null 2>&1 && echo "$n"; done; true' \
+        "$CT" "$CT" "$STAND_DATA_DEVICE"
+    if [[ -n ${1:-} ]]; then found=$(ssh -n "$1" "$script"); else found=$(bash -c "$script"); fi
+    [[ -n $found && $found != *$'\n'* ]] \
+        || die "expected one running container with the $STAND_DATA_DEVICE device on ${1:-this host}, found: ${found:-none} (setup_fabric_oom_stand.sh brings the stand up)"
+    echo "$found"
+}

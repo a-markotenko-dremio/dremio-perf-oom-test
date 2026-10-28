@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Makes a Dremio container a node of the two-host cluster: forwards its ports from the address of this host,
-# sets the cluster keys of dremio.conf and restarts Dremio. Run on the host of the container.
+# Makes a Dremio container a node of the two-host stand: mounts the data sets of the stand, forwards its ports from the
+# address of this host, sets the cluster keys of dremio.conf and restarts Dremio. Run on the host of the container.
 #   scripts/fabric_oom_repro/configure_cluster_node.sh CONTAINER PEER_HOST coordinator|executor
 # PEER_HOST is the other host of the cluster as named in /etc/hosts; the address of this host is the one that leads
 # to it. For an executor it is the host of the coordinator (ZooKeeper runs there).
@@ -13,6 +13,7 @@ source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../lib/cluster.sh"
 NAME=$1
 PEER=$2
 detect_container_cli
+mount_stand_data "$(default OOM_REPRO_DIR)"
 HOST_IP=$(own_address "$PEER")
 case $3 in
     coordinator)

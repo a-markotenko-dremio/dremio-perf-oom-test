@@ -71,3 +71,52 @@ def test_current_rules_and_the_rules_of_other_hosts_are_not_touched(iptables):
     cluster_sh("forward_ports 192.168.1.75 10.97.177.91 2181 45678", env)
     deleted = [c for c in calls() if c.startswith("-t nat -D")]
     assert deleted == [f"-t nat -D {STALE[3:]}"]
+
+
+@pytest.fixture
+def stand_hosts(tmp_path):
+    """Fake incus and ssh: incus lists the running containers of CONTAINERS (name:device,...) and logs device additions;
+    ssh runs the command locally."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "log"
+    fake_command(bin_dir, "incus", f'''
+        case "$1 $2" in
+            "list status=running") tr , "\\n" <<<"$CONTAINERS" | cut -d: -f1 | sort -u ;;
+            "config device")
+                case "$3" in
+                    get) tr , "\\n" <<<"$CONTAINERS" | grep -qx "$4:$5" ;;
+                    add) echo "add $4 $5 $6 $7 $8 $9" >> {log} ;;
+                esac ;;
+        esac''')
+    fake_command(bin_dir, "ssh", 'shift 2; exec bash -c "$1"')
+    return {"PATH": f"{bin_dir}:{os.environ['PATH']}"}, lambda: log.read_text().splitlines() if log.exists() else []
+
+
+def test_the_node_of_the_stand_is_the_running_container_with_the_data_device(stand_hosts):
+    env, _ = stand_hosts
+    env["CONTAINERS"] = "v0910:storage,d27-0-0-j21-14G-4cpu:fabric-oom-repro,d27-0-0-j21-14G-4cpu:storage"
+    assert cluster_sh("CT=incus; stand_node", env).stdout.strip() == "d27-0-0-j21-14G-4cpu"
+    assert cluster_sh("CT=incus; stand_node den", env).stdout.strip() == "d27-0-0-j21-14G-4cpu"
+
+
+@pytest.mark.parametrize("containers, found", [("v0910:storage", "none"), ("a:fabric-oom-repro,b:fabric-oom-repro", "a\nb")])
+def test_no_node_or_two_nodes_is_an_error(stand_hosts, containers, found):
+    env, _ = stand_hosts
+    env["CONTAINERS"] = containers
+    out = cluster_sh("CT=incus; stand_node", env)
+    assert out.returncode != 0
+    assert f"expected one running container with the fabric-oom-repro device on this host, found: {found}" in out.stderr
+
+
+def test_the_data_directory_is_mounted_once(stand_hosts, tmp_path):
+    env, calls = stand_hosts
+    env["CONTAINERS"] = "d27-0-0-j21-14G-4cpu:storage"
+    data = tmp_path / "fabric-oom-repro"
+    out = cluster_sh(f"CT=incus; NAME=d27-0-0-j21-14G-4cpu; mount_stand_data {data}", env)
+    assert out.returncode == 0, out.stderr
+    assert data.is_dir()
+    assert calls() == [f"add d27-0-0-j21-14G-4cpu fabric-oom-repro disk source={data} path={data} shift=true"]
+    env["CONTAINERS"] = "d27-0-0-j21-14G-4cpu:storage,d27-0-0-j21-14G-4cpu:fabric-oom-repro"
+    cluster_sh(f"CT=incus; NAME=d27-0-0-j21-14G-4cpu; mount_stand_data {data}", env)
+    assert len(calls()) == 1

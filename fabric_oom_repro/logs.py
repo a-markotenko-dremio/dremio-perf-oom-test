@@ -2,8 +2,6 @@
 import shlex
 import subprocess
 
-import settings
-
 # the log is rolled to the archive at midnight UTC: the archives come first so a roll during a run keeps the order
 LOGS = "/opt/dremio/log/archive/server.*.log.gz /opt/dremio/log/server.log"
 PATTERNS = {
@@ -28,5 +26,5 @@ def log_count(container, pattern):
     return len(log_lines(container, pattern))
 
 
-def log_counts():
-    return {c: {name: log_count(c, pattern) for name, pattern in PATTERNS.items()} for c in settings.OOM_CONTAINERS}
+def log_counts(containers):
+    return {c: {name: log_count(c, pattern) for name, pattern in PATTERNS.items()} for c in containers}
