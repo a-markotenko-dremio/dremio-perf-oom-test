@@ -17,25 +17,26 @@ import results_report
 import run_report
 
 
-def clean_output_table(dremio):
+def clean_output_table(dremio, storage_path):
     """Removes the output table of a previous run, also when this Dremio does not know it.
 
     STORAGE_PATH outlives the container, so a fresh Dremio has no metadata for the table left on
     disk; DROP TABLE IF EXISTS is then a no-op and CREATE TABLE fails with "Folder already exists".
     """
     dremio.run_sql(f"DROP TABLE IF EXISTS {settings.OUTPUT_TABLE}")
-    if settings.OUTPUT_TABLE_DIR.exists():
-        print(f"removing leftover output table folder {settings.OUTPUT_TABLE_DIR}", flush=True)
-        shutil.rmtree(settings.OUTPUT_TABLE_DIR)
+    table_dir = storage_path / settings.OUTPUT_TABLE_SUBDIR
+    if table_dir.exists():
+        print(f"removing leftover output table folder {table_dir}", flush=True)
+        shutil.rmtree(table_dir)
 
 
-def test_output_row_count_matches_input(prepared_data, dremio):
+def test_output_row_count_matches_input(prepared_data, dremio, storage_path):
     input_count = dremio.count_rows(settings.INPUT_TABLE)
     assert input_count == settings.ROW_COUNT, \
         f"Input table has {input_count} rows, expected {settings.ROW_COUNT} " \
         f"({results_report.format_rows(settings.ROW_COUNT)})"
 
-    clean_output_table(dremio)
+    clean_output_table(dremio, storage_path)
     verdict = "FAIL"
     started_at = time.time()
     started = time.monotonic()

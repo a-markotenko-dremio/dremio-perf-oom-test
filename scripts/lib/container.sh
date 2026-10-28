@@ -6,6 +6,14 @@ run_java() {
     else cx "$JAVA_HOME_DIR/bin/java" "$@"; fi
 }
 
+# The storage root holds the storages of all containers: neither it nor a directory above it is mounted into one.
+check_storage_root() {
+    local root
+    root=$(realpath -m "$(default STORAGE_ROOT)")
+    [[ $root/ != "${STORAGE_PATH%/}"/* ]] \
+        || die "--storage-path $STORAGE_PATH would mount the storage root $root of all containers: use a directory under it, e.g. $(storage_path "$NAME") (the default)"
+}
+
 # Two Dremios on one STORAGE_PATH share input/ and output/: concurrent test runs collide
 # (e.g. "Folder already exists" on CREATE TABLE). Use a separate --storage-path per container.
 check_shared_storage() {
@@ -16,7 +24,7 @@ check_shared_storage() {
             [[ -n $src ]] || continue
             src=$(realpath -m "$src")
             if [[ $src == "$STORAGE_PATH" || $src == "$STORAGE_PATH"/* || $STORAGE_PATH == "$src"/* ]]; then
-                die "container '$other' (running) already uses storage $src, which overlaps $STORAGE_PATH: use a separate --storage-path per container (e.g. $STORAGE_PATH-$NAME), or pass --allow-shared-storage"
+                die "container '$other' (running) already uses storage $src, which overlaps $STORAGE_PATH: use a separate --storage-path per container (by default $(storage_path "$NAME")), or pass --allow-shared-storage"
             fi
         done < <($CT list -c ns --format csv)
     fi

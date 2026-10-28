@@ -3,6 +3,10 @@
 log() { echo "==> $*"; }
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+# Values of defaults.py, the one definition of the shared locations: `default STORAGE_ROOT`, `storage_path NAME`.
+default() { PYTHONPATH="$(dirname "${BASH_SOURCE[0]}")/../.." python3 -c "import defaults; print(defaults.$1)"; }
+storage_path() { PYTHONPATH="$(dirname "${BASH_SOURCE[0]}")/../.." python3 -c "import sys, defaults; print(defaults.storage_path(sys.argv[1]))" "$1"; }
+
 # Picks the container CLI: sets CT (incus, or lxc) and DEFAULT_IMAGE, the stock image of that CLI.
 detect_container_cli() {
     if command -v incus >/dev/null; then CT=incus; DEFAULT_IMAGE=images:ubuntu/22.04

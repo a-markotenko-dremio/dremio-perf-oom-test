@@ -16,12 +16,13 @@ $(VENV)/.installed: requirements.txt
 clean:
 	rm -rf $(VENV) .pytest_cache __pycache__
 
-# Pre-generate the Parquet data blocks (reused by `make test`), e.g.:
-#   make data ROW_COUNT=1440000000   (or ROW_COUNT=1.44G; K/M/G suffixes work everywhere)
-STORAGE_PATH ?= $(shell python3 -c "import defaults; print(defaults.STORAGE_ROOT)")
+# Pre-generate the Parquet data blocks (reused by `make test`) in the storage of a container, e.g.:
+#   make data CONTAINER=d26-1-8-j21-16G-4cpu ROW_COUNT=1440000000   (or ROW_COUNT=1.44G; K/M/G suffixes work everywhere)
+# The storage is STORAGE_PATH when given, else <STORAGE_ROOT of defaults.py>/<CONTAINER>.
 ROW_COUNT ?= 100000
 data: $(VENV)/.installed
-	$(PYTHON) generate_data.py --rows $(ROW_COUNT) --storage $(STORAGE_PATH)
+	@test -n "$(STORAGE_PATH)$(CONTAINER)" || { echo "usage: make data CONTAINER=NAME|STORAGE_PATH=DIR [ROW_COUNT=N]" >&2; exit 2; }
+	$(PYTHON) generate_data.py --rows $(ROW_COUNT) --storage $(or $(STORAGE_PATH),$(shell python3 -c "import defaults; print(defaults.storage_path('$(CONTAINER)'))"))
 
 # PRE_SQL="ALTER SYSTEM SET ...; ..." runs these statements before the test body (see settings.py).
 # Run all tests against the Dremio in a container (as created by deploy_dremio.sh), e.g.:
@@ -41,10 +42,10 @@ test-container: $(VENV)/.installed
 #     or JAVA_IMAGE=wolfi-jdk:21 (built in the container on cgr.dev/chainguard/wolfi-base with OpenJDK 21),
 #   DOCKER_CONFIG=~/.docker/config.json (registry credentials for such an image),
 #   OVERCOMMIT=1 (allow a container memory limit above the memory of the host).
-# STORAGE_PATH defaults to the one used by `make data`; the EULA is accepted (--accept-eula).
+# STORAGE_PATH defaults to <STORAGE_ROOT of defaults.py>/<container name>; the EULA is accepted (--accept-eula).
 create-container:
 	@test -n "$(PACKAGE)" || { echo "usage: make create-container PACKAGE=<dremio-*.tar.gz> [STORAGE_PATH=DIR] [JAVA=N] [HEAP_MB=N] [DIRECT_MB=N] [CONTAINER_MB=N] [CPUS=N] [NAME=NAME] [INPUT=PATH|URL] [JAVA_IMAGE=IMAGE] [DOCKER_CONFIG=FILE] [JAVA_OPTS=OPTS] [GC_LOG=1] [RECREATE=1] [OVERCOMMIT=1]" >&2; exit 2; }
-	./deploy_dremio.sh --package "$(PACKAGE)" --storage-path "$(STORAGE_PATH)" $(if $(JAVA_IMAGE),--java-image "$(JAVA_IMAGE)",$(if $(JAVA),--java-version "$(JAVA)")) \
+	./deploy_dremio.sh --package "$(PACKAGE)" $(if $(STORAGE_PATH),--storage-path "$(STORAGE_PATH)") $(if $(JAVA_IMAGE),--java-image "$(JAVA_IMAGE)",$(if $(JAVA),--java-version "$(JAVA)")) \
 		$(if $(HEAP_MB),--heap-memory-mb "$(HEAP_MB)") $(if $(DIRECT_MB),--direct-memory-mb "$(DIRECT_MB)") --accept-eula \
 		$(if $(CONTAINER_MB),--container-memory-mb "$(CONTAINER_MB)") $(if $(CPUS),--cpus "$(CPUS)") \
 		$(if $(NAME),--name "$(NAME)") $(if $(INPUT),--input "$(INPUT)") $(if $(IMAGE),--image "$(IMAGE)") \

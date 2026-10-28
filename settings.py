@@ -7,7 +7,8 @@
   ROW_COUNT        number of rows to generate, e.g. 10000000, 10M or 1.44G (default 100000, max 2147483647)
   BLOCKS_DIR       optional directory of generated blocks shared by several STORAGE_PATHs
                    (<STORAGE_PATH>/blocks becomes a symlink to it; same filesystem recommended)
-  STORAGE_PATH     directory where both tables are stored (default: defaults.STORAGE_ROOT).
+  STORAGE_PATH     directory where both tables are stored, the storage of the container (defaults.storage_path);
+                   required by the tests that use Dremio.
                    Two NAS sources are created in Dremio: <STORAGE_PATH>/input and
                    <STORAGE_PATH>/output. The directory must be writable by the Dremio user.
   PRE_SQL          optional ';'-separated statements run before the test body, e.g. to raise the parallelism:
@@ -38,14 +39,14 @@ MAX_ROW_COUNT = 2**31 - 1  # ids are generated as INT in generate_data.py
 DATA_DIR = defaults.DATA_DIR
 REPORT_CSV = Path(os.environ.get("REPORT_CSV", DATA_DIR / "test_results.csv"))
 
-STORAGE_PATH = Path(os.environ.get("STORAGE_PATH", defaults.STORAGE_ROOT))
+STORAGE_PATH = Path(os.environ["STORAGE_PATH"]) if "STORAGE_PATH" in os.environ else None  # see the storage_path fixture
 INPUT_SOURCE = "perf_input"
 OUTPUT_SOURCE = "perf_output"
 
 INPUT_TABLE_PATH = [INPUT_SOURCE, "STACKIT_S3", "tpcds-1tb-flat", "catalog_sales"]
 INPUT_TABLE = f'"{INPUT_SOURCE}".STACKIT_S3."tpcds-1tb-flat".catalog_sales'
 OUTPUT_TABLE = f'"{OUTPUT_SOURCE}"."tpcds-1tb".catalog_sales'
-OUTPUT_TABLE_DIR = STORAGE_PATH / "output" / "tpcds-1tb" / "catalog_sales"
+OUTPUT_TABLE_SUBDIR = Path("output", "tpcds-1tb", "catalog_sales")  # of STORAGE_PATH
 SQL_PARAMS = {"INPUT_SOURCE": INPUT_SOURCE, "OUTPUT_SOURCE": OUTPUT_SOURCE}
 
 

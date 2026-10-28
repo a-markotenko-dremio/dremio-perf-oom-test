@@ -8,12 +8,11 @@ source "$REPO/scripts/lib/common.sh"
 source "$REPO/scripts/lib/cluster.sh"
 cd "$REPO"
 
-default() { python3 -c "import defaults; print(defaults.$1)"; }
 COORDINATOR=$(default OOM_REPRO_COORDINATOR)
 EXECUTOR=$(default OOM_REPRO_EXECUTOR)
 EXECUTOR_HOST=$(default OOM_REPRO_EXECUTOR_HOST)
 EXECUTOR_REPO=$(default OOM_REPRO_EXECUTOR_REPO)
-STORAGE=$(default STORAGE_ROOT)
+STORAGE=$(default OOM_REPRO_STORAGE)
 DATA=$STORAGE/$(default OOM_REPRO_SUBDIR)
 TARBALL=/mnt/ubuntu-var/nfs/shared/Downloads/dremio-enterprise-25.2.0-202410241428100111-a963b970.tar.gz
 

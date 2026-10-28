@@ -20,9 +20,9 @@ def system_options(dremio):
 
 
 @pytest.fixture(scope="module")
-def tables(dremio):
+def tables(dremio, storage_path):
     """The NAS source over the generated tables, with both folders promoted to Parquet tables (one folder per year)."""
-    dremio.ensure_nas_source(settings.OOM_SOURCE, settings.STORAGE_PATH / defaults.OOM_REPRO_SUBDIR)
+    dremio.ensure_nas_source(settings.OOM_SOURCE, storage_path / defaults.OOM_REPRO_SUBDIR)
     for name in TABLES:
         if dremio.entity_type([settings.OOM_SOURCE, name]) != "dataset":
             dremio.promote_folder([settings.OOM_SOURCE, name])

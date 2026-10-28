@@ -43,7 +43,7 @@ def remove_storage(root, name, keep=None):
     """Deletes <root>/<name>, the storage of a container: the tables of a test and what a failed run left behind. The
     shared data blocks are not in it (it holds links to them: a link is removed, not what it points to); `keep`, a
     directory that must survive, is refused when it lies inside."""
-    root, path = Path(root), Path(root) / name
+    root, path = Path(root), defaults.storage_path(name, root)
     if name in ("", ".", "..") or Path(name).name != name:
         raise ValueError(f"{name!r} is not a directory directly under {root}")
     if keep is not None and Path(keep).resolve().is_relative_to(path.resolve()):
@@ -94,7 +94,7 @@ class Runner:
         self.delete()
         a = self.args
         cmd = [str(ROOT / "deploy_dremio.sh"), "--package", self.combo.package,
-               "--storage-path", f"{a.storage_root}/{self.name}", "--java-image", self.combo.image, "--name", self.name,
+               "--storage-path", str(defaults.storage_path(self.name, a.storage_root)), "--java-image", self.combo.image, "--name", self.name,
                "--container-memory-mb", str(a.container_mb), "--cpus", str(a.cpus),
                "--heap-memory-mb", str(heap), "--direct-memory-mb", str(a.direct_mb),
                "--accept-eula", "--recreate", "--dry-run"]

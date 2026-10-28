@@ -113,7 +113,7 @@ def clean_stale(args):
     killed. Only directories named like a container of this script are touched, never Downloads or the shared blocks."""
     stale = stale_storage_dirs(args.storage_root, list_containers(container_cli()))
     for name in stale:
-        print(f"{'would delete' if args.plan else 'deleting'} the storage {args.storage_root}/{name}")
+        print(f"{'would delete' if args.plan else 'deleting'} the storage {defaults.storage_path(name, args.storage_root)}")
         if not args.plan:
             remove_storage(args.storage_root, name, keep=os.environ.get("BLOCKS_DIR"))
     if not stale:

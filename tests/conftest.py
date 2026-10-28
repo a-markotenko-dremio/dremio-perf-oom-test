@@ -40,9 +40,17 @@ def dremio():
 
 
 @pytest.fixture(scope="session")
-def storage(dremio):
+def storage_path():
+    """STORAGE_PATH, which the tests that use Dremio need (the offline tests run without it)."""
+    if settings.STORAGE_PATH is None:
+        pytest.fail("STORAGE_PATH is not set: the storage of the container, see defaults.storage_path")
+    return settings.STORAGE_PATH
+
+
+@pytest.fixture(scope="session")
+def storage(dremio, storage_path):
     """Creates the Dremio NAS sources that keep both tables on STORAGE_PATH."""
-    path = settings.STORAGE_PATH
+    path = storage_path
     if not os.access(path.parent if not path.exists() else path, os.W_OK):
         pytest.fail(f"STORAGE_PATH {path} is not writable by user "
                     f"{os.environ.get('USER', '?')}; create it and grant write access")
@@ -51,10 +59,10 @@ def storage(dremio):
 
 
 @pytest.fixture(scope="session")
-def prepared_data(dremio, storage):
+def prepared_data(dremio, storage, storage_path):
     """The generated input table, registered in Dremio."""
     assert 0 < settings.ROW_COUNT <= settings.MAX_ROW_COUNT, \
         f"ROW_COUNT must be in 1..{settings.MAX_ROW_COUNT}, got {settings.ROW_COUNT}"
     dremio.unpromote_table(settings.INPUT_TABLE_PATH)
-    generate_data.generate(settings.ROW_COUNT, settings.STORAGE_PATH, log=lambda m: print(m, flush=True))
+    generate_data.generate(settings.ROW_COUNT, storage_path, log=lambda m: print(m, flush=True))
     dremio.promote_folder(settings.INPUT_TABLE_PATH)

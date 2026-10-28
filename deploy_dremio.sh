@@ -12,14 +12,15 @@ for lib in common image container dremio; do source "$SCRIPT_DIR/scripts/lib/$li
 
 usage() {
     cat <<EOF
-Usage: $0 --package FILE --storage-path DIR [options]
+Usage: $0 --package FILE [options]
 
 Required:
   --package FILE             Dremio tarball (dremio-*.tar.gz)
-  --storage-path DIR         local directory where the test tables are stored; mounted into
-                             the container at the same path (STORAGE_PATH for the tests)
 
 Options:
+  --storage-path DIR         local directory where the test tables are stored; mounted into
+                             the container at the same path (STORAGE_PATH for the tests)
+                             (default: $(default STORAGE_ROOT)/<name>; the root itself is never mounted)
   --java-version N           OpenJDK major version installed in the container (default: $DEFAULT_JAVA_VERSION)
   --java-image IMAGE         run Dremio with the Java of this Docker image instead (Docker is installed in the
                              container; the image needs bash and java, use a -dev image), e.g.
@@ -120,7 +121,6 @@ check_host_memory() {
 # Checks the settings and fills in the defaults that depend on each other (rows, JVM options, memory, name).
 validate_settings() {
     [[ -n $PACKAGE ]] || { usage >&2; die "--package is required"; }
-    [[ -n $STORAGE_PATH ]] || { usage >&2; die "--storage-path is required"; }
     [[ -f $PACKAGE ]] || die "package not found: $PACKAGE"
     [[ $PACKAGE == *.tar.gz || $PACKAGE == *.tgz ]] || die "only tarball packages (.tar.gz) are supported"
     ROWS=${ROWS:-${ROW_COUNT:-}}
@@ -153,6 +153,7 @@ validate_settings() {
         || die "heap ($HEAP_MB) + direct ($DIRECT_MB) MB must be less than container memory ($CONTAINER_MB MB)"
     check_host_memory
     [[ -n $NAME ]] || NAME=$(default_container_name "$PACKAGE" "$(java_label)" "$CONTAINER_MB" "$CPUS")
+    [[ -n $STORAGE_PATH ]] || STORAGE_PATH=$(storage_path "$NAME")
 }
 
 # --input: local directory -> mounted into the container; URL -> checked over TCP.
@@ -185,6 +186,7 @@ $CT list >/dev/null 2>&1 || die "'$CT list' failed: no access to the daemon (add
 
 mkdir -p "$STORAGE_PATH"
 STORAGE_PATH=$(realpath "$STORAGE_PATH")
+check_storage_root
 
 resolve_input
 
