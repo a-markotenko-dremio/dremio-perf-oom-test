@@ -18,6 +18,14 @@ detect_container_cli
 mount_stand_dir "$STAND_DATA_DEVICE" "$(default OOM_REPRO_DIR)"
 mount_stand_dir fabric-oom-dist "$4"
 HOST_IP=$(own_address "$PEER")
+# The nodes share DIST_DIR through NFS but run as different host users (the container on the other host is not
+# idmapped on NFS), so a file or directory one node creates must be writable by the other: Hadoop's umask is 000.
+cx tee /opt/dremio/conf/core-site.xml >/dev/null <<'XML'
+<configuration>
+  <property><name>fs.permissions.umask-mode</name><value>000</value></property>
+</configuration>
+XML
+
 # The conduit (gRPC between the nodes: catalog settings, metadata jobs) listens on a random port unless fixed; the
 # peers reach it through the published host address, so it is fixed and forwarded like fabric.
 CONDUIT_PORT=45679

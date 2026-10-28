@@ -21,7 +21,7 @@ EXECUTOR=$(default_container_name "$TARBALL" $JAVA $EXECUTOR_MB $EXECUTOR_CPUS)
 EXECUTOR_HOST=$(default OOM_REPRO_EXECUTOR_HOST)
 EXECUTOR_REPO=$(default OOM_REPRO_EXECUTOR_REPO)
 DATA=$(default OOM_REPRO_DATA)
-DIST=$(default OOM_REPRO_DIST)/$COORDINATOR
+DIST=$(default OOM_REPRO_DIST)/$COORDINATOR-$(date +%Y%m%d-%H%M%S)  # a new directory per stand: files of an earlier one belong to other users
 
 # stop everything on both hosts, create the containers
 incus stop --all
