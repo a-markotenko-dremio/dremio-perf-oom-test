@@ -15,14 +15,18 @@ PEER=$2
 detect_container_cli
 mount_stand_data "$(default OOM_REPRO_DIR)"
 HOST_IP=$(own_address "$PEER")
+# The conduit (gRPC between the nodes: catalog settings, metadata jobs) listens on a random port unless fixed; the
+# peers reach it through the published host address, so it is fixed and forwarded like fabric.
+CONDUIT_PORT=45679
 case $3 in
     coordinator)
-        configure_cluster_node "$HOST_IP" "2181 9047 31010 45678" "registration.publish-host: \"$HOST_IP\"" ;;
+        configure_cluster_node "$HOST_IP" "2181 9047 31010 45678 $CONDUIT_PORT" "registration.publish-host: \"$HOST_IP\"" \
+            "services.conduit.port: $CONDUIT_PORT" ;;
     executor)
-        configure_cluster_node "$HOST_IP" "45678" \
+        configure_cluster_node "$HOST_IP" "45678 $CONDUIT_PORT" \
             "services.coordinator.enabled: false" "services.coordinator.master.enabled: false" \
             "services.executor.enabled: true" "zookeeper: \"$(host_address "$PEER"):2181\"" \
-            "registration.publish-host: \"$HOST_IP\"" ;;
+            "registration.publish-host: \"$HOST_IP\"" "services.conduit.port: $CONDUIT_PORT" ;;
     *) echo "role must be coordinator or executor, not $3" >&2; exit 2 ;;
 esac
 echo "done: $NAME advertises $HOST_IP as $3"
