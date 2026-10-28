@@ -54,15 +54,15 @@ configure_cluster_node() {
         systemctl restart dremio'
 }
 
-# The data sets of the fabric OOM stand are mounted into every node at their host path (a NAS source needs one path on
-# all nodes) as this device; the device also marks the containers of the stand.
+# Directories of the fabric OOM stand are mounted into every node at their host path (a NAS source and the distributed
+# path need one path on all nodes) as devices; the data device also marks the containers of the stand.
 STAND_DATA_DEVICE=fabric-oom-repro
 
-# mount_stand_data DIR: mounts DIR into the container NAME at the same path, once.
-mount_stand_data() {
-    mkdir -p "$1"
-    $CT config device get "$NAME" "$STAND_DATA_DEVICE" source >/dev/null 2>&1 \
-        || $CT config device add "$NAME" "$STAND_DATA_DEVICE" disk source="$1" path="$1" shift=true
+# mount_stand_dir DEVICE DIR: mounts DIR into the container NAME at the same path, once.
+mount_stand_dir() {
+    mkdir -p "$2"
+    $CT config device get "$NAME" "$1" source >/dev/null 2>&1 \
+        || $CT config device add "$NAME" "$1" disk source="$2" path="$2" shift=true
 }
 
 # stand_node [HOST]: the running container of the stand on HOST (this host when omitted): the one with the data device.

@@ -21,6 +21,7 @@ EXECUTOR=$(default_container_name "$TARBALL" $JAVA $EXECUTOR_MB $EXECUTOR_CPUS)
 EXECUTOR_HOST=$(default OOM_REPRO_EXECUTOR_HOST)
 EXECUTOR_REPO=$(default OOM_REPRO_EXECUTOR_REPO)
 DATA=$(default OOM_REPRO_DATA)
+DIST=$(default OOM_REPRO_DIST)/$COORDINATOR
 
 # stop everything on both hosts, create the containers
 incus stop --all
@@ -34,8 +35,8 @@ ssh -n "$EXECUTOR_HOST" "cd $EXECUTOR_REPO && ./deploy_dremio.sh --package $TARB
     --container-memory-mb $EXECUTOR_MB --recreate --accept-eula --dry-run"
 
 # cluster config (mounts the data directory into both nodes), then wait for the executor and the UI
-scripts/fabric_oom_repro/configure_cluster_node.sh "$COORDINATOR" "$EXECUTOR_HOST" coordinator
-ssh -n "$EXECUTOR_HOST" "cd $EXECUTOR_REPO && scripts/fabric_oom_repro/configure_cluster_node.sh $EXECUTOR $(hostname) executor"
+scripts/fabric_oom_repro/configure_cluster_node.sh "$COORDINATOR" "$EXECUTOR_HOST" coordinator "$DIST"
+ssh -n "$EXECUTOR_HOST" "cd $EXECUTOR_REPO && scripts/fabric_oom_repro/configure_cluster_node.sh $EXECUTOR $(hostname) executor $DIST"
 NAME=$COORDINATOR
 detect_container_cli
 registered() { cx grep -q "nodesRegistered $(host_address "$EXECUTOR_HOST")" /opt/dremio/log/server.log; }

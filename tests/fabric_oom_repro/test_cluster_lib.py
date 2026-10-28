@@ -109,14 +109,14 @@ def test_no_node_or_two_nodes_is_an_error(stand_hosts, containers, found):
     assert f"expected one running container with the fabric-oom-repro device on this host, found: {found}" in out.stderr
 
 
-def test_the_data_directory_is_mounted_once(stand_hosts, tmp_path):
+def test_a_stand_directory_is_mounted_once(stand_hosts, tmp_path):
     env, calls = stand_hosts
     env["CONTAINERS"] = "d27-0-0-j21-14G-4cpu:storage"
     data = tmp_path / "fabric-oom-repro"
-    out = cluster_sh(f"CT=incus; NAME=d27-0-0-j21-14G-4cpu; mount_stand_data {data}", env)
+    out = cluster_sh(f"CT=incus; NAME=d27-0-0-j21-14G-4cpu; mount_stand_dir fabric-oom-repro {data}", env)
     assert out.returncode == 0, out.stderr
     assert data.is_dir()
     assert calls() == [f"add d27-0-0-j21-14G-4cpu fabric-oom-repro disk source={data} path={data} shift=true"]
     env["CONTAINERS"] = "d27-0-0-j21-14G-4cpu:storage,d27-0-0-j21-14G-4cpu:fabric-oom-repro"
-    cluster_sh(f"CT=incus; NAME=d27-0-0-j21-14G-4cpu; mount_stand_data {data}", env)
+    cluster_sh(f"CT=incus; NAME=d27-0-0-j21-14G-4cpu; mount_stand_dir fabric-oom-repro {data}", env)
     assert len(calls()) == 1
