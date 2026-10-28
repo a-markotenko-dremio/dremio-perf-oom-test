@@ -60,12 +60,12 @@ STAND_DATA_DEVICE=fabric-oom-repro
 
 # mount_stand_dir DEVICE DIR: mounts DIR into the container NAME at the same path, once. A directory on NFS is mounted
 # without shift (idmapped mounts do not work on NFS): the container sees it with the permissions "other", so it is made
-# accessible to everyone.
+# writable for everyone, with a default ACL so that the directories created by one node are writable by the others.
 mount_stand_dir() {
     mkdir -p "$2"
     $CT config device get "$NAME" "$1" source >/dev/null 2>&1 && return
     if [[ $(stat -f -c %T "$2") == nfs* ]]; then
-        chmod a+rwx "$2"
+        setfacl -R -m o::rwx,d:o::rwx "$2"  # directories the nodes create later inherit it
         $CT config device add "$NAME" "$1" disk source="$2" path="$2"
     else
         $CT config device add "$NAME" "$1" disk source="$2" path="$2" shift=true
