@@ -16,7 +16,7 @@ def storage_path(container, root=STORAGE_ROOT):
 
 
 BLOCKS_SUBDIR = "blocks"                            # generated data blocks inside a storage
-OOM_REPRO_SUBDIR = "qa-oom-repro"                   # tables of the fabric OOM repro inside a storage: TestCaseData, TestSuiteInfo
+OOM_REPRO_SUBDIR = "qa-oom-repro"                   # the data set of the stand inside its storage (OOM_DATA of settings.py)
 OOM_REPRO_SOURCE = "OOM Repro"                      # the Dremio NAS source over that directory
 OOM_REPRO_COORDINATOR = "d25-2-0-j21-14G-4cpu"      # containers of the two-host stand of the fabric OOM repro
 OOM_REPRO_EXECUTOR_HOST = "den"                     # the host of the second container (name as in /etc/hosts and ssh)

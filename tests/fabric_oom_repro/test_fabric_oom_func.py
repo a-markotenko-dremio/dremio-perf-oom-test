@@ -17,7 +17,7 @@ import pytest
 import settings
 from fabric_oom_repro import fabric_oom
 from fabric_oom_repro.logs import log_lines
-from fabric_oom_repro.workload import INNOCENT, run_workload
+from fabric_oom_repro.workload import INNOCENT, describe, run_workload
 
 Run = namedtuple("Run", "outcomes innocent events summary")
 
@@ -28,7 +28,7 @@ def run(dremio, tables, system_options):
     before = {c: len(log_lines(c, fabric_oom.PATTERN)) for c in settings.OOM_CONTAINERS}
     outcomes, innocent = run_workload(dremio, INNOCENT if settings.OOM_INNOCENT else None)
     events = fabric_oom.merge({c: fabric_oom.parse(log_lines(c, fabric_oom.PATTERN)[n:]) for c, n in before.items()})
-    summary = (f"system options={system_options}\noutcomes: {[f'{o.state} after {o.seconds:.0f}s' for o in outcomes]}\n"
+    summary = (f"{describe(system_options, outcomes)}\n"
                f"innocent query: {f'{innocent.state} after {innocent.seconds:.0f}s' if innocent else 'not run'}\n"
                f"events: {({name: len(e) for name, e in events.items()})}, failures by cause: "
                f"{dict(Counter(cause or 'not named' for *_, cause in events['job_failed']))}")

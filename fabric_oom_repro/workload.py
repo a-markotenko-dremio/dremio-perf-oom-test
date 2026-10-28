@@ -60,6 +60,12 @@ INNOCENT_DELAY = 30  # seconds after the 8 queries start
 Outcome = namedtuple("Outcome", "job state seconds")  # state: COMPLETED, or the first line of the error
 
 
+def describe(system_options, outcomes):
+    """The first lines of a run summary: what the run was tied to (data set, system options) and how the queries ended."""
+    return (f"data set={settings.OOM_DATA}\nsystem options={system_options}\n"
+            f"outcomes: {[f'{o.state} after {o.seconds:.0f}s' for o in outcomes]}")
+
+
 def run_query(dremio, sql):
     started = time.time()
     try:

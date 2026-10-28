@@ -1,9 +1,9 @@
-"""Fixtures of the fabric OOM tests: the system options of a run and the tables of the repro."""
+"""Fixtures of the fabric OOM tests: the system options of a run, the data set and its tables."""
 import pytest
 
-import defaults
 import settings
-from fabric_oom_repro.generate_oom_data import TABLES, YEARS
+from fabric_oom_repro.generate_oom_data import TABLES
+from fabric_oom_repro.tables import register
 
 
 @pytest.fixture(scope="module")
@@ -19,12 +19,19 @@ def system_options(dremio):
         dremio.run_sql(f'ALTER SYSTEM RESET "{name}"')
 
 
+@pytest.fixture(scope="session")
+def oom_data(storage_path):
+    """The directory of the data set (OOM_DATA under STORAGE_PATH): the input every run of the repro is tied to."""
+    if settings.OOM_DATA is None:
+        pytest.fail("OOM_DATA is not set: the data set of the repro, a directory of STORAGE_PATH with TestCaseData and "
+                    "TestSuiteInfo (setup_fabric_oom_stand.sh generates the one of the stand)")
+    path = storage_path / settings.OOM_DATA
+    if not all((path / name).is_dir() for name in TABLES):
+        pytest.fail(f"OOM_DATA {path} has no {' and '.join(TABLES)}: generate it with fabric_oom_repro.generate_oom_data")
+    return path
+
+
 @pytest.fixture(scope="module")
-def tables(dremio, storage_path):
-    """The NAS source over the generated tables, with both folders promoted to Parquet tables (one folder per year)."""
-    dremio.ensure_nas_source(settings.OOM_SOURCE, storage_path / defaults.OOM_REPRO_SUBDIR)
-    for name in TABLES:
-        if dremio.entity_type([settings.OOM_SOURCE, name]) != "dataset":
-            dremio.promote_folder([settings.OOM_SOURCE, name])
-        years = {row["dir0"] for row in dremio.query_rows(f'SELECT DISTINCT dir0 FROM "{settings.OOM_SOURCE}".{name}')}
-        assert years == set(YEARS), f"{name}: unexpected years {sorted(years)}"
+def tables(dremio, oom_data):
+    """The tables of the data set registered in Dremio."""
+    register(dremio, settings.OOM_SOURCE, oom_data)
