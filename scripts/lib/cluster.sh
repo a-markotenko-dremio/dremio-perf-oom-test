@@ -63,7 +63,7 @@ STAND_DATA_DEVICE=fabric-oom-repro
 # writable for everyone, with a default ACL so that the directories created by one node are writable by the others.
 mount_stand_dir() {
     mkdir -p "$2"
-    [[ $($CT config device get "$NAME" "$1" source 2>/dev/null) != "$2" ]] || return
+    [[ $($CT config device get "$NAME" "$1" source 2>/dev/null) != "$2" ]] || return 0
     $CT config device remove "$NAME" "$1" 2>/dev/null || true  # mounted elsewhere by an earlier stand
     if [[ $(stat -f -c %T "$2") == nfs* ]]; then
         setfacl -R -m o::rwx,d:o::rwx "$2"  # directories the nodes create later inherit it

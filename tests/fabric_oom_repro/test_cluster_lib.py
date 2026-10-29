@@ -122,7 +122,8 @@ def test_a_stand_directory_is_mounted_once(stand_hosts, tmp_path):
     before = len(calls())
     env["CONTAINERS"] = "d27-0-0-j21-14G-4cpu:storage,d27-0-0-j21-14G-4cpu:fabric-oom-repro"
     env["MOUNTED"] = str(data)
-    cluster_sh(f"CT=incus; NAME=d27-0-0-j21-14G-4cpu; mount_stand_dir fabric-oom-repro {data}", env)
+    out = cluster_sh(f"CT=incus; NAME=d27-0-0-j21-14G-4cpu; mount_stand_dir fabric-oom-repro {data}", env)
+    assert out.returncode == 0, out.stderr  # an already mounted directory must not fail a script that runs with set -e
     assert len(calls()) == before
 
 
