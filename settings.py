@@ -24,8 +24,10 @@
   OOM_WIDTH        planner.width.max_per_node of the repro run (default 24, as in the master repro)
   OOM_RESERVE_PCT  optional exec.spillable.operators.pct_free_memory_watermark of the repro run (Dremio default 20)
   OOM_MAX_QUERY_SECONDS
-                   how long a query of the run may take and still count as served (default 600, see
-                   test_a_surviving_query_is_still_served_in_time)
+                   how long a query of the fix verification may take (default 600): a query that reaches the limit is
+                   cancelled and the run fails on the limit (test_no_query_takes_longer_than_the_run_allows). 0 removes
+                   the limit, and the run instead checks that every query is served in the end
+                   (test_every_query_of_the_workload_is_served); it then takes as long as the queries need.
   OOM_INNOCENT     1 runs the small query next to the 8 of the fix verification (default 0: with it the fabric OOM
                    did not reproduce in 2 of 2 runs, without it in 5 of 5)
   REPORT_CSV       CSV the run is appended to (default data/test_results.csv); the traceback log of a failed run goes next to it

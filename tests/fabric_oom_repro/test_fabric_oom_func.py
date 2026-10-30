@@ -10,7 +10,11 @@ module run with the default reserve (no OOM_RESERVE_PCT). TC-04 needs its own ru
 query the fabric OOM did not reproduce, so the other criteria are checked without it.
 
 TC-11 is the cost of surviving: a query the arbiter saved from the OOM is of no use to the user if it answers after
-half an hour, so the slowest query that was served is a number of every run and OOM_MAX_QUERY_SECONDS bounds it.
+half an hour, so OOM_MAX_QUERY_SECONDS is the time a query of the run may take. It is also what keeps a run short: a
+query that reaches the limit is cancelled, and TC-11 fails the run on the limit, not on the product. TC-12 is the other
+half of it and needs OOM_MAX_QUERY_SECONDS=0: with no limit the queries run to their end and the run says whether the
+fix works at all (every query of the workload is served), at the price of an hour
+(scripts/fabric_oom_repro/run_fabric_oom_feature.sh).
 
 TC-05 and TC-10 see the same picture when it is the stand that broke and not the product: an executor that lost its
 ZooKeeper session leaves the cluster and takes its queries down with it. They judge the product only, and
@@ -25,26 +29,30 @@ import pytest
 import settings
 from fabric_oom_repro import fabric_oom
 from fabric_oom_repro.logs import log_lines
-from fabric_oom_repro.workload import INNOCENT, describe, run_workload, slowest_completed, unrelated_failures
+from fabric_oom_repro.workload import (INNOCENT, describe, over_the_limit, run_workload, slowest_completed,
+                                       unrelated_failures)
 
-Run = namedtuple("Run", "outcomes innocent events unrelated summary")
+Run = namedtuple("Run", "outcomes innocent events unrelated cut summary")
 
 
 @pytest.fixture(scope="module")
 def run(dremio, tables, system_options, containers):
     """The workload, with the events it added to the logs of all containers merged in time order."""
     before = {c: len(log_lines(c, fabric_oom.PATTERN)) for c in containers}
-    outcomes, innocent = run_workload(dremio, INNOCENT if settings.OOM_INNOCENT else None)
+    outcomes, innocent = run_workload(dremio, INNOCENT if settings.OOM_INNOCENT else None,
+                                      settings.OOM_MAX_QUERY_SECONDS or None)
     events = fabric_oom.merge({c: fabric_oom.parse(log_lines(c, fabric_oom.PATTERN)[n:]) for c, n in before.items()})
-    unrelated = unrelated_failures(outcomes)
+    unrelated, cut = unrelated_failures(outcomes), over_the_limit(outcomes)
     summary = (f"{describe(system_options, outcomes)}\n"
                f"innocent query: {f'{innocent.state} after {innocent.seconds:.0f}s' if innocent else 'not run'}\n"
                f"events: {({name: len(e) for name, e in events.items()})}, failures by cause: "
                f"{dict(Counter(cause or 'not named' for *_, cause in events['job_failed']))}\n"
                f"node losses: {fabric_oom.node_losses(events)}, jobs failed for another reason: {unrelated}\n"
+               f"time limit of a query: {f'{settings.OOM_MAX_QUERY_SECONDS}s' if settings.OOM_MAX_QUERY_SECONDS else 'none'}, "
+               f"queries it cut off: {cut}\n"
                f"slowest query that was served: {f'{slowest.seconds:.0f}s' if (slowest := slowest_completed(outcomes)) else 'none'}")
     print("\n" + summary)
-    return Run(outcomes, innocent, events, unrelated, summary)
+    return Run(outcomes, innocent, events, unrelated, cut, summary)
 
 
 def test_run_put_memory_under_pressure(run):
@@ -57,7 +65,7 @@ def test_no_fabric_oom(run):
 
 
 def test_no_query_failed_because_of_a_fabric_oom(run):
-    caused = fabric_oom.failures_after_fabric_oom(run.events)
+    caused = [job for job in fabric_oom.failures_after_fabric_oom(run.events) if job not in run.cut]
     assert not caused, f"jobs failed right after a fabric OOM: {caused}\n{run.summary}"
 
 
@@ -77,19 +85,28 @@ def test_the_stand_held_through_the_run(run):
 
 def test_one_failure_does_not_take_the_node_down(run):
     """The bug fails every fragment of a node at once, so its signature is many jobs failing in the same second. The
-    jobs the stand took down are not that signature: they are counted out here and reported by the test above."""
-    ignore = set(run.unrelated) | set(fabric_oom.failures_of_the_stand(run.events))
+    jobs the stand took down are not that signature, and neither are the ones the run cancelled on its time limit
+    (they too end in one second, all at the limit): both are counted out here and reported by their own test."""
+    ignore = set(run.unrelated) | set(run.cut) | set(fabric_oom.failures_of_the_stand(run.events))
     most = fabric_oom.most_failures_in_one_second(run.events, ignore)
     assert most <= 1, f"{most} jobs failed in the same second (the node went down)\n{run.summary}"
 
 
-def test_a_surviving_query_is_still_served_in_time(run):
-    """TC-11: spilling instead of failing is the fix working, but only while the answer still arrives in time."""
-    slowest = slowest_completed(run.outcomes)
-    assert slowest and slowest.seconds <= settings.OOM_MAX_QUERY_SECONDS, (
-        f"the slowest query that was served took {slowest.seconds:.0f}s, more than the "
-        f"{settings.OOM_MAX_QUERY_SECONDS}s a query of this run may take\n{run.summary}" if slowest else
-        f"no query of the run was served\n{run.summary}")
+@pytest.mark.skipif(not settings.OOM_MAX_QUERY_SECONDS, reason="this run has no time limit (OOM_MAX_QUERY_SECONDS=0)")
+def test_no_query_takes_longer_than_the_run_allows(run):
+    """TC-11: spilling instead of failing is the fix working, but only while the answer still arrives in time. A
+    failure here is a failure on the time limit: the queries it names were cancelled, not failed by the product, and
+    whether they would ever have answered is what the run without a limit (TC-12) measures."""
+    assert not run.cut, (f"the run was cut off by its time limit: {len(run.cut)} queries did not answer within "
+                         f"{settings.OOM_MAX_QUERY_SECONDS}s {run.cut}\n{run.summary}")
+
+
+@pytest.mark.skipif(bool(settings.OOM_MAX_QUERY_SECONDS), reason="the queries are cut off by the time limit of the run")
+def test_every_query_of_the_workload_is_served(run):
+    """TC-12: the fix works when a query under memory pressure spills and answers instead of being lost. This is the
+    one criterion that needs the whole run, however long it takes, so it runs without a time limit and on its own."""
+    lost = sorted(o.job for o in run.outcomes if o.state != "COMPLETED")
+    assert not lost, f"{len(lost)} queries of the workload were never served: {lost}\n{run.summary}"
 
 
 def test_arbiter_acts_before_memory_runs_out(run):

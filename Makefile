@@ -1,7 +1,7 @@
 VENV := .venv
 PYTHON := $(VENV)/bin/python
 
-.PHONY: test test-container create-container venv clean data report scatter fabric-oom fabric-oom-stand fabric-oom-repro fabric-oom-func fabric-oom-clean
+.PHONY: test test-container create-container venv clean data report scatter fabric-oom fabric-oom-stand fabric-oom-repro fabric-oom-func fabric-oom-feature fabric-oom-clean
 
 test: $(VENV)/.installed
 	$(PYTHON) -m pytest -v -rs tests
@@ -56,6 +56,7 @@ create-container:
 # coordinator host; the pytest output of every run goes to data/fabric-oom-<case>-<time>.log), e.g.:
 #   make fabric-oom TARBALL=/mnt/ubuntu-var/nfs/shared/Downloads/dremio-enterprise-25.2.0-202410241428100111-a963b970.tar.gz
 #   make fabric-oom-func RUNS=3                      (fix verification on the stand that is up)
+#   make fabric-oom-feature RUNS=1                   (the same workload with no time limit: does the fix serve every query)
 #   make fabric-oom-repro OOM_DATA=/mnt/.../other    (the repro on another data set)
 #   make fabric-oom-clean                            (remove the stand from both hosts, keep the generated data)
 # A run that fails (the repro test fails when the bug does not reproduce) does not stop the next; the exit status is the last failure.
@@ -66,7 +67,7 @@ fabric-oom-stand: $(VENV)/.installed
 	@test -n "$(TARBALL)" || { echo "usage: make fabric-oom-stand TARBALL=<dremio-*.tar.gz>" >&2; exit 2; }
 	scripts/fabric_oom_repro/setup_fabric_oom_stand.sh "$(TARBALL)"
 
-fabric-oom-repro fabric-oom-func: fabric-oom-%: $(VENV)/.installed
+fabric-oom-repro fabric-oom-func fabric-oom-feature: fabric-oom-%: $(VENV)/.installed
 	@rc=0; for i in $$(seq $(RUNS)); do \
 	    bash -o pipefail -c 'scripts/fabric_oom_repro/run_fabric_oom_$*.sh 2>&1 | tee "data/fabric-oom-$*-$$(date +%Y%m%d-%H%M%S).log"' || rc=$$?; \
 	done; exit $$rc

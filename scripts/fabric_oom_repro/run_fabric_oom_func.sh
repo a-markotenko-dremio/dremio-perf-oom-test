@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Runs the fix verification of the fabric direct-memory OOM (fabric-oom-test-plan.md) on the stand of
 # setup_fabric_oom_stand.sh: with the 4 % arbiter reserve of the repro, with the default reserve (TC-03), and with the
-# small query next to the 8 (TC-04). Run on the coordinator host (make fabric-oom-func).
+# small query next to the 8 (TC-04). Every query is cut off after OOM_MAX_QUERY_SECONDS, so a session ends in minutes
+# and a query that needs longer fails the run on the limit (TC-11); run_fabric_oom_feature.sh is the run without one.
+# Run on the coordinator host (make fabric-oom-func).
 set -euxo pipefail
 source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/env.sh"
 rc=0

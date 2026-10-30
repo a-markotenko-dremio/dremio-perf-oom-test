@@ -50,6 +50,20 @@ def test_a_missing_source_is_created(catalog, monkeypatch):
     assert [(kind, body["config"]) for kind, _, body in calls] == [("post", {"path": str(STAND)})]
 
 
+def test_a_job_that_passes_its_own_time_limit_is_cancelled(monkeypatch):
+    """The time limit of a fabric OOM run (OOM_MAX_QUERY_SECONDS) bounds one job, not the client: the job is
+    cancelled when it reaches the limit and the error names it, so the run does not wait out DREMIO_TIMEOUT."""
+    clock, calls = [0.0], []
+    monkeypatch.setattr(dremio_client.time, "time", lambda: clock[0])
+    monkeypatch.setattr(dremio_client.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    monkeypatch.setattr(dremio_client.requests, "post", lambda url, **kw: calls.append(url) or response(id="job1"))
+    monkeypatch.setattr(dremio_client.requests, "get", lambda url, **kw: response(jobState="RUNNING"))
+    client = dremio_client.DremioClient("http://192.168.1.75:9047", 7200)
+    with pytest.raises(dremio_client.JobTimeout, match="did not finish within 600s"):
+        client.run_sql("SELECT 1", timeout=600)
+    assert calls[-1] == "http://192.168.1.75:9047/api/v3/job/job1/cancel"
+
+
 def test_a_bool_option_is_written_as_an_sql_keyword():
     """ALTER SYSTEM SET "dremio.results_cache_rest_enabled" = False is a syntax error; false is not."""
     assert dremio_client.sql_value(False) == "false"

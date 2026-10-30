@@ -2,7 +2,7 @@
 Offline tests of fabric_oom_repro.workload on the job errors of the runs of the stand (2026-10-29 and 2026-10-30):
 which of them is a memory failure the bug can explain and which is not about memory at all.
 """
-from fabric_oom_repro.workload import Outcome, slowest_completed, unrelated_failures
+from fabric_oom_repro.workload import OVER_THE_LIMIT, Outcome, over_the_limit, slowest_completed, unrelated_failures
 
 OOM = Outcome("151b2143-37c8-7a5b-8f79-4f2d935a3a00", "Job 151b2143-37c8-7a5b-8f79-4f2d935a3a00 FAILED: OUT_OF_MEMORY "
               "ERROR: Query was cancelled because it exceeded the memory limits set by the administrator. The executor "
@@ -16,8 +16,8 @@ BROKEN_INPUT = Outcome("151b2142-cb9e-ab22-7001-940566fed600", "Job 151b2142-cb9
                        "DATA_READ ERROR: Snappy decompression failed on column TestName::varchar. If this exception "
                        "continues to occur, then ensure the file exists and is valid: /mnt/ubuntu-var/dremio/"
                        "fabric-oom-repro/scale-0.0175/TestCaseData/2026/data_1.parquet", 23)
-TIMEOUT = Outcome("151b2142-a53e-d36a-dd25-27cddd150a00",
-                  "Job 151b2142-a53e-d36a-dd25-27cddd150a00 did not finish within 2400s (state=RUNNING)", 2400)
+# the run of 13:50 on 2026-10-30: the queries that were served took 1627-2235 s, far past a 600 s limit
+CUT_OFF = Outcome("151afcf2-8d57-0cb9-dff6-e58cc20ef700", OVER_THE_LIMIT, 600)
 DONE = Outcome("151b2142-ee93-ddf2-d53a-f1cc3d6f1f00", "COMPLETED", 29)
 
 
@@ -29,8 +29,14 @@ def test_a_failure_on_the_input_file_is_unrelated():
     assert unrelated_failures([OOM, BROKEN_INPUT, DONE]) == ["151b2142-cb9e-ab22-7001-940566fed600"]
 
 
-def test_a_query_that_ran_out_of_time_is_unrelated():
-    assert unrelated_failures([TIMEOUT]) == ["151b2142-a53e-d36a-dd25-27cddd150a00"]
+def test_a_query_the_run_cut_off_is_not_a_failure_of_the_product():
+    """The time limit is the run's own, so the query it cancels belongs to TC-11 and dirties nothing."""
+    assert not unrelated_failures([CUT_OFF, DONE])
+    assert over_the_limit([CUT_OFF, DONE]) == ["151afcf2-8d57-0cb9-dff6-e58cc20ef700"]
+
+
+def test_a_query_the_run_cut_off_was_not_served():
+    assert slowest_completed([CUT_OFF]) is None
 
 
 def test_the_slowest_served_query_is_the_cost_of_surviving():

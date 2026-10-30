@@ -45,13 +45,14 @@ class DremioClient:
         return requests.get(f"{self.url}{path}", headers=self.headers, timeout=timeout, **kwargs)
 
     # ---- SQL
-    def run_sql(self, sql):
-        """Runs one statement and returns the finished job (with its id)."""
+    def run_sql(self, sql, timeout=None):
+        """Runs one statement and returns the finished job (with its id); `timeout` overrides self.timeout for it."""
         r = requests.post(f"{self.url}/api/v3/sql", headers=self.headers, json={"sql": sql}, timeout=60)
         r.raise_for_status()
         job_id = r.json()["id"]
 
-        deadline = time.time() + self.timeout
+        timeout = timeout or self.timeout
+        deadline = time.time() + timeout
         while True:
             job = self._get(f"/api/v3/job/{job_id}").json()
             state = job["jobState"]
@@ -59,7 +60,7 @@ class DremioClient:
                 break
             if time.time() > deadline:
                 requests.post(f"{self.url}/api/v3/job/{job_id}/cancel", headers=self.headers, timeout=30)
-                raise JobTimeout(f"Job {job_id} did not finish within {self.timeout}s (state={state})")
+                raise JobTimeout(f"Job {job_id} did not finish within {timeout}s (state={state})")
             time.sleep(1)
 
         if state != "COMPLETED":

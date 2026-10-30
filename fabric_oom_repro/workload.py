@@ -63,6 +63,9 @@ Outcome = namedtuple("Outcome", "job state seconds")  # state: COMPLETED, or the
 # ChannelClosedException and the lost executor of a node that went down. Another class (a broken input file, a
 # planning error) or a timeout is not about memory and says nothing about the bug.
 MEMORY_FAILURE = re.compile("OUT_OF_MEMORY ERROR|SYSTEM ERROR: ChannelClosedException|compute nodes became unavailable")
+# The state of a query the run itself cut off after OOM_MAX_QUERY_SECONDS: the product did not fail it, the run ran out
+# of patience, so it is neither a memory failure nor a dirty run (TC-11 reports them, the other tests ignore them).
+OVER_THE_LIMIT = "OVER THE LIMIT: the query did not return within the time the run allows"
 
 
 def describe(system_options, outcomes):
@@ -78,24 +81,33 @@ def slowest_completed(outcomes):
 
 def unrelated_failures(outcomes):
     """The jobs of the run that failed for a reason that is not a memory failure: the run is dirty, they prove nothing."""
-    return sorted(o.job for o in outcomes if o.state != "COMPLETED" and not MEMORY_FAILURE.search(o.state))
+    return sorted(o.job for o in outcomes
+                  if o.state not in ("COMPLETED", OVER_THE_LIMIT) and not MEMORY_FAILURE.search(o.state))
 
 
-def run_query(dremio, sql):
+def over_the_limit(outcomes):
+    """The jobs the run cut off before they could answer."""
+    return sorted(o.job for o in outcomes if o.state == OVER_THE_LIMIT)
+
+
+def run_query(dremio, sql, limit=None):
     started = time.time()
     try:
-        job, state = dremio.run_sql(sql)["id"], "COMPLETED"
-    except (JobFailed, JobTimeout) as e:
+        job, state = dremio.run_sql(sql, timeout=limit)["id"], "COMPLETED"
+    except JobTimeout as e:
+        job, state = str(e).split()[1], OVER_THE_LIMIT
+    except JobFailed as e:
         job, state = str(e).split()[1], str(e).splitlines()[0]
     return Outcome(job, state, time.time() - started)
 
 
-def run_workload(dremio, innocent=None):
-    """Runs QUERIES at the same time and, if given, `innocent` INNOCENT_DELAY seconds later; their outcomes."""
+def run_workload(dremio, innocent=None, limit=None):
+    """Runs QUERIES at the same time and, if given, `innocent` INNOCENT_DELAY seconds later; their outcomes. A query
+    that takes longer than `limit` seconds is cancelled and ends OVER_THE_LIMIT; without a limit it runs to its end."""
     with ThreadPoolExecutor(len(QUERIES)) as pool:
-        heavy = [pool.submit(run_query, dremio, sql) for sql in QUERIES]
+        heavy = [pool.submit(run_query, dremio, sql, limit) for sql in QUERIES]
         small = None
         if innocent:
             time.sleep(INNOCENT_DELAY)
-            small = run_query(dremio, innocent)
+            small = run_query(dremio, innocent, limit)
     return [f.result() for f in heavy], small
