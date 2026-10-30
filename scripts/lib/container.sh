@@ -144,7 +144,7 @@ install_dremio() {
     cx test -x /opt/dremio/bin/dremio || die "bin/dremio not found: unexpected tarball layout"
 }
 
-# Writes dremio-env (memory, JVM options), the systemd unit and starts Dremio.
+# Writes dremio-env (memory, JVM options) and the systemd unit, and starts Dremio unless NO_START.
 configure_dremio() {
     log "Configuring dremio-env (heap ${HEAP_MB}MB, direct ${DIRECT_MB}MB, JAVA_HOME $JAVA_HOME_DIR${JAVA_OPTS:+, JVM options: $JAVA_OPTS})"
     cx bash -c "
@@ -165,7 +165,8 @@ configure_dremio() {
 
     write_service_unit
     cx systemctl daemon-reload
-    cx systemctl enable --now dremio
+    # --no-start leaves it to the caller (a cluster node is started once, after its dremio.conf is written)
+    if (( NO_START )); then cx systemctl enable dremio; else cx systemctl enable --now dremio; fi
 }
 
 # The systemd unit: Dremio runs directly, or with --java-image inside a Docker container of that image

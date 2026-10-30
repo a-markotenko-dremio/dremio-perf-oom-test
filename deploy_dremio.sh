@@ -60,6 +60,10 @@ Options:
   --dry-run                  deploy and verify the environment, then run pytest in dry-run
                              mode: tests are collected and the environment smoke test runs,
                              but the real test (data generation, queries) is skipped
+  --no-start                 install and configure Dremio but leave it stopped, and skip what needs it
+                             running (the first user, the configuration check, pytest). For a cluster
+                             node, whose dremio.conf the caller still rewrites: it starts Dremio once,
+                             instead of this script starting it and the caller restarting it
   -h, --help                 show this help
 EOF
 }
@@ -68,7 +72,7 @@ PACKAGE="" STORAGE_PATH="" INPUT="" IMAGE=""
 DEFAULT_JAVA_VERSION=21
 JAVA_VERSION="" JAVA_IMAGE="" DOCKER_CONFIG_FILE="" HEAP_MB=4096 DIRECT_MB=8192 CONTAINER_MB="" CPUS="" NAME=""
 JAVA_OPTS="" GC_LOG=0
-RECREATE=0 DRY_RUN=0 ACCEPT_EULA=0 REBUILD_IMAGE=0 ROWS="" ALLOW_SHARED=0 ALLOW_OVERCOMMIT=0
+RECREATE=0 DRY_RUN=0 NO_START=0 ACCEPT_EULA=0 REBUILD_IMAGE=0 ROWS="" ALLOW_SHARED=0 ALLOW_OVERCOMMIT=0
 
 # Reads the command line into the variables above.
 parse_args() {
@@ -95,6 +99,7 @@ parse_args() {
             --allow-shared-storage) ALLOW_SHARED=1; shift ;;
             --allow-memory-overcommit) ALLOW_OVERCOMMIT=1; shift ;;
             --dry-run) DRY_RUN=1; shift ;;
+            --no-start) NO_START=1; shift ;;
             -h|--help) usage; exit 0 ;;
             *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
         esac
@@ -202,6 +207,10 @@ install_java
 create_dremio_user
 install_dremio
 configure_dremio
+if (( NO_START )); then
+    log "Dremio installed and left stopped (--no-start)"
+    exit 0
+fi
 wait_for_dremio
 ensure_admin_user
 verify_configuration
