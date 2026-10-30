@@ -19,7 +19,9 @@ SEAWEEDFS=4.51   # pinned: a store that changes under the stand would change wha
 HOST_IP=$(own_address "$1")
 
 $CT delete --force "$NAME" 2>/dev/null || true
-$CT launch "$DEFAULT_IMAGE" "$NAME" >/dev/null
+# capped: it shares the host with the coordinator, whose container limit is already above the memory free there,
+# and a host OOM kill of that node would look like the node loss the tests hunt for
+$CT launch "$DEFAULT_IMAGE" "$NAME" -c limits.cpu=1 -c limits.memory=1GiB >/dev/null
 for _ in $(seq 60); do cx getent hosts github.com >/dev/null 2>&1 && break; sleep 1; done
 cx bash -euc "
     SEAWEEDFS=$SEAWEEDFS
