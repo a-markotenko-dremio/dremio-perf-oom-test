@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Safely mount/unmount the dynamically attached /mnt/ubuntu-var volume together with its NFS export and the incus
+# storage pool that lives on it.
+# Usage: sudo ~/bin/ubuntu-var mount|umount  (sudo does not search ~/bin, so give the path)
+set -euo pipefail
+
+LV=ubuntu-vg/var
+DEVICE=/dev/mapper/ubuntu--vg-var
+MOUNTPOINT=/mnt/ubuntu-var
+EXPORT_PATH=$MOUNTPOINT/nfs/shared
+EXPORT_UNITS=(ubuntu-var-export.path ubuntu-var-export.service)
+POOL=default
+POOL_DIR=$MOUNTPOINT/incus
+BRIDGE=incusbr0
+POOL_MOUNT=/var/lib/incus/storage-pools/$POOL
+BRIDGE_ADDRESS=10.97.177.1/24
+
+[[ $EUID -eq 0 ]] || { echo "Run as root: sudo $0 $*" >&2; exit 1; }
+
+readable() { dd if="$DEVICE" of=/dev/null bs=4k count=1 iflag=direct status=none 2>/dev/null; }
+
+instances() { incus list --format csv -c ns | awk -F, -v state="$1" '$2 == state {print $1}'; }
+running_instances() { instances RUNNING; }
+
+# Unexport, stop incus instances and drop every mount of the volume (also the incus pool bind mount).
+# Arguments are passed to "incus stop". On a dead disk "incus stop" may fail while cleaning up
+# after the instance has stopped, so only instances that are still running are an error.
+release_volume() {
+    systemctl stop "${EXPORT_UNITS[@]}"
+    exportfs -f  # drop the unexported share from the kernel table, else knfsd keeps the volume busy
+    mapfile -t running < <(running_instances)
+    if (( ${#running[@]} )); then
+        echo "Stopping incus instances: ${running[*]}"
+        incus stop "$@" "${running[@]}" || echo "incus stop failed, checking instance state" >&2
+        mapfile -t running < <(running_instances)
+        (( ${#running[@]} == 0 )) || { echo "Still running: ${running[*]}" >&2; return 1; }
+    fi
+    if findmnt -S "$DEVICE" >/dev/null; then
+        umount -A "$DEVICE"
+    fi
+    if findmnt -S "$DEVICE" >/dev/null; then
+        echo "Cannot release $DEVICE, still mounted:" >&2
+        findmnt -S "$DEVICE" >&2
+        fuser -vm "$DEVICE" >&2 || true
+        return 1
+    fi
+}
+
+# What incus needs to run the containers of this volume: the storage pool in $POOL_DIR, the bridge and the devices of
+# the default profile. Only the pool needs the volume mounted. Safe to run again; a pool that a host already has on
+# another path is left alone and reported, because moving it would delete its containers.
+ensure_incus() {
+    local source
+    if source=$(incus storage get "$POOL" source 2>/dev/null) && [[ -n $source ]]; then
+        [[ $source == "$POOL_DIR" ]] || echo "incus pool $POOL is on $source, not $POOL_DIR" >&2
+    else
+        mkdir -p "$POOL_DIR"
+        incus storage create "$POOL" dir source="$POOL_DIR"
+    fi
+    incus network get "$BRIDGE" ipv4.address >/dev/null 2>&1 \
+        || incus network create "$BRIDGE" ipv4.address="$BRIDGE_ADDRESS" ipv4.nat=true ipv6.address=auto ipv6.nat=true
+    incus profile device get default root pool >/dev/null 2>&1 \
+        || incus profile device add default root disk path=/ pool="$POOL"
+    incus profile device get default eth0 network >/dev/null 2>&1 \
+        || incus profile device add default eth0 nic network="$BRIDGE"
+}
+
+case "${1:-}" in
+mount)
+    mountpoint -q "$MOUNTPOINT" && { echo "$MOUNTPOINT is already mounted" >&2; exit 1; }
+    lvchange -ay "$LV"
+    if ! readable; then
+        echo "$DEVICE is not readable (disk was reattached?), reactivating $LV"
+        release_volume --force
+        lvchange -an "$LV"
+        lvchange -ay "$LV"
+        readable || { echo "$DEVICE is still not readable, check the disk" >&2; exit 1; }
+    fi
+    mount "$DEVICE" "$MOUNTPOINT"
+    systemctl start "${EXPORT_UNITS[0]}"
+    for _ in {1..10}; do
+        exportfs -v | grep -q "^$EXPORT_PATH" && break
+        sleep 1
+    done
+    exportfs -v | grep -q "^$EXPORT_PATH" || { echo "Mounted, but $EXPORT_PATH was not exported" >&2; exit 1; }
+    ensure_incus
+    # incusd mounts the pool out of the volume at startup, so after a remount it has to be restarted before the
+    # instances, whose storage is in that pool, can start.
+    systemctl restart incus.service
+    for _ in {1..30}; do
+        findmnt "$POOL_MOUNT" >/dev/null && break
+        sleep 1
+    done
+    findmnt "$POOL_MOUNT" >/dev/null || { echo "incus pool $POOL was not mounted on $POOL_MOUNT" >&2; exit 1; }
+    mapfile -t stopped < <(instances STOPPED)
+    if (( ${#stopped[@]} )); then
+        echo "Starting incus instances: ${stopped[*]}"
+        incus start "${stopped[@]}"
+    fi
+    echo "Mounted and exported: $EXPORT_PATH; incus pool $POOL on $(incus storage get "$POOL" source)"
+    ;;
+umount)
+    mountpoint -q "$MOUNTPOINT" || { echo "$MOUNTPOINT is not mounted" >&2; exit 1; }
+    if ! release_volume; then
+        systemctl start "${EXPORT_UNITS[0]}"
+        exit 1
+    fi
+    lvchange -an "$LV"
+    echo "Unmounted $MOUNTPOINT, $LV deactivated: the disk can be disconnected"
+    ;;
+*)
+    echo "Usage: $0 mount|umount" >&2
+    exit 1
+    ;;
+esac
