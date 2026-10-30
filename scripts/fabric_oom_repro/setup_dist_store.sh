@@ -15,13 +15,15 @@ detect_container_cli
 NAME=$(default OOM_REPRO_S3)
 PORT=$(default OOM_REPRO_S3_PORT)
 BUCKET=$(default OOM_REPRO_DIST_BUCKET)
+SEAWEEDFS=4.51   # pinned: a store that changes under the stand would change what the runs measure
 HOST_IP=$(own_address "$1")
 
 $CT delete --force "$NAME" 2>/dev/null || true
 $CT launch "$DEFAULT_IMAGE" "$NAME" >/dev/null
 for _ in $(seq 60); do cx getent hosts github.com >/dev/null 2>&1 && break; sleep 1; done
 cx bash -euc "
-    curl -fsSL https://github.com/seaweedfs/seaweedfs/releases/latest/download/linux_amd64.tar.gz \
+    SEAWEEDFS=$SEAWEEDFS
+    curl -fsSL https://github.com/seaweedfs/seaweedfs/releases/download/\$SEAWEEDFS/linux_amd64.tar.gz \
         | tar -xz -C /usr/local/bin weed
     mkdir -p /data /etc/seaweedfs
     cat > /etc/seaweedfs/s3.json <<JSON
