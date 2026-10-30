@@ -128,12 +128,12 @@ def test_a_stand_directory_is_mounted_once(stand_hosts, tmp_path):
 
 
 def test_a_device_mounting_another_directory_is_replaced(stand_hosts, tmp_path):
-    """A second stand uses a new dist directory: the device of the first stand would leave it unmounted."""
+    """A second stand uses another data set: the device of the first stand would leave it unmounted."""
     env, calls = stand_hosts
-    env["CONTAINERS"] = "d27-0-0-j21-14G-4cpu:fabric-oom-dist"
-    env["MOUNTED"] = "/mnt/ubuntu-var/nfs/shared/fabric-oom-dist/first"
-    new = tmp_path / "second"
-    out = cluster_sh(f"CT=incus; NAME=d27-0-0-j21-14G-4cpu; mount_stand_dir fabric-oom-dist {new}", env)
+    env["CONTAINERS"] = "d27-0-0-j21-14G-4cpu:fabric-oom-repro"
+    env["MOUNTED"] = "/mnt/ubuntu-var/dremio/fabric-oom-repro/scale-0.0175"
+    new = tmp_path / "scale-0.05"
+    out = cluster_sh(f"CT=incus; NAME=d27-0-0-j21-14G-4cpu; mount_stand_dir fabric-oom-repro {new}", env)
     assert out.returncode == 0, out.stderr
-    assert calls() == ["remove d27-0-0-j21-14G-4cpu fabric-oom-dist",
-                       f"add d27-0-0-j21-14G-4cpu fabric-oom-dist disk source={new} path={new} shift=true"]
+    assert calls() == ["remove d27-0-0-j21-14G-4cpu fabric-oom-repro",
+                       f"add d27-0-0-j21-14G-4cpu fabric-oom-repro disk source={new} path={new} shift=true"]

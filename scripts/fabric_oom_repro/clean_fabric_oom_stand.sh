@@ -29,8 +29,6 @@ mapfile -t storages < <(container_storages)
 nat_rules "$(own_address "$PEER")" | drop_nat_rules
 
 if [[ ${1:-} != --local ]]; then
-    # the distributed directories are on the share of this host, so they are removed here, not on both
-    rm -rf "$(default OOM_REPRO_DIST)"
     ssh -n "$EXECUTOR_HOST" "cd $(default OOM_REPRO_EXECUTOR_REPO) \
         && scripts/fabric_oom_repro/clean_fabric_oom_stand.sh --local $(hostname)"
 fi

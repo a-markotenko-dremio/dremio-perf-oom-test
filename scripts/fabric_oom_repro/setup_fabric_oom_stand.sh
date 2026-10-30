@@ -21,7 +21,6 @@ EXECUTOR=$(default_container_name "$TARBALL" $JAVA $EXECUTOR_MB $EXECUTOR_CPUS)
 EXECUTOR_HOST=$(default OOM_REPRO_EXECUTOR_HOST)
 EXECUTOR_REPO=$(default OOM_REPRO_EXECUTOR_REPO)
 DATA=$(default OOM_REPRO_DATA)
-DIST=$(default OOM_REPRO_DIST)/$COORDINATOR-$(date +%Y%m%d-%H%M%S)  # a new directory per stand: files of an earlier one belong to other users
 
 # stop everything on both hosts, then create the containers on both at once: the deployments are independent and
 # each copies the 1 GB tarball into its container, which is the longest step of the stand.
@@ -41,9 +40,9 @@ wait $coordinator_deploy
 wait $executor_deploy
 
 # cluster config (mounts the data directory into both nodes and starts Dremio), then wait for the executor and the UI
-scripts/fabric_oom_repro/configure_cluster_node.sh "$COORDINATOR" "$EXECUTOR_HOST" coordinator "$DIST" &
+scripts/fabric_oom_repro/configure_cluster_node.sh "$COORDINATOR" "$EXECUTOR_HOST" coordinator &
 coordinator_config=$!
-ssh -n "$EXECUTOR_HOST" "cd $EXECUTOR_REPO && scripts/fabric_oom_repro/configure_cluster_node.sh $EXECUTOR $(hostname) executor $DIST" &
+ssh -n "$EXECUTOR_HOST" "cd $EXECUTOR_REPO && scripts/fabric_oom_repro/configure_cluster_node.sh $EXECUTOR $(hostname) executor" &
 executor_config=$!
 wait $coordinator_config
 wait $executor_config

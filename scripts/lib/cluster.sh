@@ -65,23 +65,17 @@ configure_cluster_node() {
         systemctl restart dremio'
 }
 
-# Directories of the fabric OOM stand are mounted into every node at their host path (a NAS source and the distributed
-# path need one path on all nodes) as devices; the data device also marks the containers of the stand.
+# The data set of the fabric OOM stand is mounted into every node at its host path (a NAS source needs one path on
+# all nodes) as this device; the device also marks the containers of the stand.
 STAND_DATA_DEVICE=fabric-oom-repro
 
-# mount_stand_dir DEVICE DIR: mounts DIR into the container NAME at the same path (replaces the device if it mounts another directory). A directory on NFS is mounted
-# without shift (idmapped mounts do not work on NFS): the container sees it with the permissions "other", so it is made
-# writable for everyone.
+# mount_stand_dir DEVICE DIR: mounts DIR into the container NAME at the same path, replacing the device if it mounts
+# another directory (an earlier stand used another data set).
 mount_stand_dir() {
     mkdir -p "$2"
     [[ $($CT config device get "$NAME" "$1" source 2>/dev/null) != "$2" ]] || return 0
-    $CT config device remove "$NAME" "$1" 2>/dev/null || true  # mounted elsewhere by an earlier stand
-    if [[ $(stat -f -c %T "$2") == nfs* ]]; then
-        chmod a+rwx "$2"  # what the nodes create inside has mode 777 (Hadoop umask 000, see configure_cluster_node.sh)
-        $CT config device add "$NAME" "$1" disk source="$2" path="$2"
-    else
-        $CT config device add "$NAME" "$1" disk source="$2" path="$2" shift=true
-    fi
+    $CT config device remove "$NAME" "$1" 2>/dev/null || true
+    $CT config device add "$NAME" "$1" disk source="$2" path="$2" shift=true
 }
 
 # stand_node [HOST]: the running container of the stand on HOST (this host when omitted): the one with the data device.
