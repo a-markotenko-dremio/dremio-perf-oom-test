@@ -13,16 +13,27 @@ own_address() {
     ip -4 route get "$(host_address "$1")" | grep -oP 'src \K\S+'
 }
 
+# nat_rules HOST_IP [PORT]: the PREROUTING DNAT rules of this host address, of one port when given.
+nat_rules() {
+    sudo iptables -t nat -S PREROUTING | { grep -E -- "-d $1/32 .*${2:+--dport $2 .*}-j DNAT" || true; }
+}
+
+# drop_nat_rules: deletes the rules read from stdin as lines of "iptables -t nat -S".
+drop_nat_rules() {
+    local rule
+    while read -r rule; do
+        [[ -z $rule ]] || sudo iptables -t nat ${rule/#-A/-D}
+    done
+}
+
 # forward_ports HOST_IP CONTAINER_IP PORT...: DNAT from the host address to the container. Rules of the same host
 # address and port that lead elsewhere (a recreated container has a new address) are removed first.
 forward_ports() {
-    local host_ip=$1 container_ip=$2 p stale
+    local host_ip=$1 container_ip=$2 p
     shift 2
     sudo sysctl -w net.ipv4.ip_forward=1
     for p in "$@"; do
-        while read -r stale; do
-            [[ -z $stale ]] || sudo iptables -t nat ${stale/#-A/-D}
-        done < <(sudo iptables -t nat -S PREROUTING | grep -E -- "-d $host_ip/32 .*--dport $p .*-j DNAT" | grep -v -- "--to-destination $container_ip:$p\$")
+        nat_rules "$host_ip" "$p" | { grep -v -- "--to-destination $container_ip:$p\$" || true; } | drop_nat_rules
         local rule=(PREROUTING -d "$host_ip" -p tcp --dport "$p" -j DNAT --to-destination "$container_ip:$p")
         sudo iptables -t nat -C "${rule[@]}" 2>/dev/null || sudo iptables -t nat -A "${rule[@]}"
     done

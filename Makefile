@@ -1,7 +1,7 @@
 VENV := .venv
 PYTHON := $(VENV)/bin/python
 
-.PHONY: test test-container create-container venv clean data report scatter fabric-oom fabric-oom-stand fabric-oom-repro fabric-oom-func
+.PHONY: test test-container create-container venv clean data report scatter fabric-oom fabric-oom-stand fabric-oom-repro fabric-oom-func fabric-oom-clean
 
 test: $(VENV)/.installed
 	$(PYTHON) -m pytest -v -rs tests
@@ -57,6 +57,7 @@ create-container:
 #   make fabric-oom TARBALL=/mnt/ubuntu-var/nfs/shared/Downloads/dremio-enterprise-25.2.0-202410241428100111-a963b970.tar.gz
 #   make fabric-oom-func RUNS=3                      (fix verification on the stand that is up)
 #   make fabric-oom-repro OOM_DATA=/mnt/.../other    (the repro on another data set)
+#   make fabric-oom-clean                            (remove the stand from both hosts, keep the generated data)
 # A run that fails (the repro test fails when the bug does not reproduce) does not stop the next; the exit status is the last failure.
 RUNS ?= 3
 fabric-oom: fabric-oom-stand fabric-oom-repro
@@ -69,6 +70,9 @@ fabric-oom-repro fabric-oom-func: fabric-oom-%: $(VENV)/.installed
 	@rc=0; for i in $$(seq $(RUNS)); do \
 	    bash -o pipefail -c 'scripts/fabric_oom_repro/run_fabric_oom_$*.sh 2>&1 | tee "data/fabric-oom-$*-$$(date +%Y%m%d-%H%M%S).log"' || rc=$$?; \
 	done; exit $$rc
+
+fabric-oom-clean:
+	scripts/fabric_oom_repro/clean_fabric_oom_stand.sh
 
 # SVG report of the results, e.g.: make report CSV="data/test_results_den.csv data/test_results_home4.csv"
 CSV ?= data/test_results.csv
