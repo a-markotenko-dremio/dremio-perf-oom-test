@@ -27,8 +27,11 @@ DATA=$(default OOM_REPRO_DATA)
 incus stop --all
 ssh -n "$EXECUTOR_HOST" "incus stop --all"
 ssh -n "$EXECUTOR_HOST" "cd $EXECUTOR_REPO && git pull --ff-only"
-# the distributed store of the stand, as this host reaches it and as the executor host does
-read -r S3_LOCAL S3_REMOTE < <(scripts/fabric_oom_repro/setup_dist_store.sh "$EXECUTOR_HOST" | tail -1)
+# the store depends on nothing but the stops above, so it comes up while the tarballs are copied
+STORE_OUT=$(mktemp)
+trap 'rm -f "$STORE_OUT"' EXIT
+scripts/fabric_oom_repro/setup_dist_store.sh "$EXECUTOR_HOST" >"$STORE_OUT" &
+store=$!
 # --no-start: the node is started once, by configure_cluster_node.sh, with the cluster keys already in dremio.conf
 ./deploy_dremio.sh --package "$TARBALL" --name "$COORDINATOR" --java-version $JAVA --cpus $COORDINATOR_CPUS \
     --heap-memory-mb $COORDINATOR_HEAP_MB --direct-memory-mb $COORDINATOR_DIRECT_MB --container-memory-mb $COORDINATOR_MB \
@@ -40,6 +43,9 @@ ssh -n "$EXECUTOR_HOST" "cd $EXECUTOR_REPO && ./deploy_dremio.sh --package $TARB
 executor_deploy=$!
 wait $coordinator_deploy
 wait $executor_deploy
+wait $store
+# the two addresses of the store: as this host reaches it, and as the executor host does
+read -r S3_LOCAL S3_REMOTE < <(tail -1 "$STORE_OUT")
 
 # cluster config (mounts the data directory into both nodes and starts Dremio), then wait for the executor and the UI
 scripts/fabric_oom_repro/configure_cluster_node.sh "$COORDINATOR" "$EXECUTOR_HOST" coordinator "$S3_LOCAL" &
