@@ -23,6 +23,9 @@
                    host; required by the repro tests (on the stand env.sh finds the nodes by their data device)
   OOM_WIDTH        planner.width.max_per_node of the repro run (default 24, as in the master repro)
   OOM_RESERVE_PCT  optional exec.spillable.operators.pct_free_memory_watermark of the repro run (Dremio default 20)
+  OOM_MAX_QUERY_SECONDS
+                   how long a query of the run may take and still count as served (default 600, see
+                   test_a_surviving_query_is_still_served_in_time)
   OOM_INNOCENT     1 runs the small query next to the 8 of the fix verification (default 0: with it the fabric OOM
                    did not reproduce in 2 of 2 runs, without it in 5 of 5)
   REPORT_CSV       CSV the run is appended to (default data/test_results.csv); the traceback log of a failed run goes next to it
@@ -71,6 +74,7 @@ OOM_SOURCE = os.environ.get("OOM_SOURCE", defaults.OOM_REPRO_SOURCE)
 OOM_CONTAINERS = os.environ["OOM_CONTAINERS"].split(",") if "OOM_CONTAINERS" in os.environ else None  # see the containers fixture
 OOM_WIDTH = int(os.environ.get("OOM_WIDTH", "24"))
 OOM_RESERVE_PCT = os.environ.get("OOM_RESERVE_PCT")
+OOM_MAX_QUERY_SECONDS = int(os.environ.get("OOM_MAX_QUERY_SECONDS", "600"))
 OOM_INNOCENT = os.environ.get("OOM_INNOCENT", "0") == "1"
 
 PRE_SQL = split_statements(os.environ.get("PRE_SQL", ""))

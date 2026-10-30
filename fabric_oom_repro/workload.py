@@ -2,6 +2,7 @@
 The workload of the fabric OOM repro (DX-127946): the 8 aggregation and join queries of the master repro (DX-127207) on
 TestCaseData / TestSuiteInfo run at the same time, optionally with one small query started next to them.
 """
+import re
 import time
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
@@ -58,12 +59,26 @@ INNOCENT = f"SELECT COUNT(*) AS n FROM {TEST_CASE_DATA} WHERE dir0 = '2024'"  # 
 INNOCENT_DELAY = 30  # seconds after the 8 queries start
 
 Outcome = namedtuple("Outcome", "job state seconds")  # state: COMPLETED, or the first line of the error
+# The errors a memory failure of the run gives a query: the OOM of the arbiter or of an operator, and the
+# ChannelClosedException and the lost executor of a node that went down. Another class (a broken input file, a
+# planning error) or a timeout is not about memory and says nothing about the bug.
+MEMORY_FAILURE = re.compile("OUT_OF_MEMORY ERROR|SYSTEM ERROR: ChannelClosedException|compute nodes became unavailable")
 
 
 def describe(system_options, outcomes):
     """The first lines of a run summary: what the run was tied to (data set, system options) and how the queries ended."""
     return (f"data set={settings.OOM_DATA}\nsystem options={system_options}\n"
             f"outcomes: {[f'{o.state} after {o.seconds:.0f}s' for o in outcomes]}")
+
+
+def slowest_completed(outcomes):
+    """The query that took longest and still returned its result: what surviving the pressure costs."""
+    return max((o for o in outcomes if o.state == "COMPLETED"), key=lambda o: o.seconds, default=None)
+
+
+def unrelated_failures(outcomes):
+    """The jobs of the run that failed for a reason that is not a memory failure: the run is dirty, they prove nothing."""
+    return sorted(o.job for o in outcomes if o.state != "COMPLETED" and not MEMORY_FAILURE.search(o.state))
 
 
 def run_query(dremio, sql):

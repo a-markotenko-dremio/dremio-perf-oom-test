@@ -56,6 +56,26 @@ CHANNEL_CLOSED = ("2026-10-29 18:36:46,440 [Fabric-RPC-Offload15] INFO  c.d.exec
                   "Channel closed /10.103.137.130:34498 <--> /192.168.1.75:45678 (fabric client)")
 
 
+# the stand, not the bug (run of 2026-10-30): the executor on the other host lost its ZooKeeper session, the
+# coordinator unregistered it and failed every query it was running, all within the same second
+ZK_SUSPENDED = ("2026-10-30 18:21:12,365 [Curator-ConnectionStateManager-0] WARN  c.d.s.c.zk.ZKClusterCoordinator - "
+                "ZK connection suspended for service executor. Endpoint updates paused.")
+NODE_LOST = ("2026-10-30 18:21:35,157 [executor-selection-service-queue] INFO  tracker.logger - "
+             "nodesUnregistered 192.168.1.66:45678")
+LOST_NODE_FAILED = [
+    "2026-10-30 18:21:35,154 [Curator-TreeCache-0] INFO  c.d.exec.work.foreman.AttemptManager - "
+    "151b20b2-bb1e-d7df-67a9-d4b588918000: State change requested RUNNING --> FAILED, Exception "
+    "com.dremio.common.exceptions.UserException: Dremio could not execute the query because required compute nodes "
+    "became unavailable. Executors were removed from the cluster or lost network connectivity. Failed nodes: "
+    "['192.168.1.66:45678'].",
+    "2026-10-30 18:21:35,155 [Curator-TreeCache-0] INFO  c.d.exec.work.foreman.AttemptManager - "
+    "151b20b3-4cef-828e-1400-cce703ddf800: State change requested RUNNING --> FAILED, Exception "
+    "com.dremio.common.exceptions.UserException: Dremio could not execute the query because required compute nodes "
+    "became unavailable. Executors were removed from the cluster or lost network connectivity. Failed nodes: "
+    "['192.168.1.66:45678'].",
+]
+
+
 def at(seconds, line=FAILED, job="15259175-55ba-db94-09e0-47a26c46d400"):
     """The line with its time moved to 22:38:16 + seconds and, for a job line, the job id replaced."""
     ts = datetime(2026, 10, 22, 22, 38, 16, 908000) + timedelta(seconds=seconds)
@@ -150,5 +170,37 @@ def test_a_victim_whose_channel_was_closed_is_a_failure_without_a_named_cause():
 def test_the_zgrep_pattern_keeps_every_line_the_parser_needs():
     import re
     for line in (FABRIC_ERROR, CAUSED_BY, SHRINK, *ARBITER_FAILED, PLANNING, FAILED, UNREGISTERED,
-                 DIRECT_EXHAUSTED, CAUSED_BY_27, SHRINK_27, CHANNEL_CLOSED):
+                 DIRECT_EXHAUSTED, CAUSED_BY_27, SHRINK_27, CHANNEL_CLOSED, ZK_SUSPENDED, NODE_LOST,
+                 *LOST_NODE_FAILED):
         assert re.search(fabric_oom.PATTERN, line), line
+
+
+def test_a_node_that_left_with_its_zookeeper_session_is_the_stand_not_the_bug():
+    """The ZooKeeper loss is logged by the node that left, the unregistration by the coordinator."""
+    events = fabric_oom.merge({"den": fabric_oom.parse([ZK_SUSPENDED]),
+                               "dell35": fabric_oom.parse([*LOST_NODE_FAILED, NODE_LOST])})
+    assert events["zk_lost"] == [(datetime(2026, 10, 30, 18, 21, 12, 365000), "suspended")]
+    assert fabric_oom.node_losses(events) == [(datetime(2026, 10, 30, 18, 21, 35, 157000), "192.168.1.66:45678", "stand")]
+
+
+def test_the_jobs_a_node_took_down_with_it_are_not_the_signature_of_the_bug():
+    events = fabric_oom.merge({"den": fabric_oom.parse([ZK_SUSPENDED]),
+                               "dell35": fabric_oom.parse([*LOST_NODE_FAILED, NODE_LOST])})
+    assert fabric_oom.most_failures_in_one_second(events) == 2
+    assert fabric_oom.failures_of_the_stand(events) == ["151b20b2-bb1e-d7df-67a9-d4b588918000",
+                                                        "151b20b3-4cef-828e-1400-cce703ddf800"]
+    assert fabric_oom.most_failures_in_one_second(events, fabric_oom.failures_of_the_stand(events)) == 0
+
+
+def test_a_node_that_left_after_a_fabric_oom_is_the_bug():
+    events = fabric_oom.parse([FABRIC_ERROR, CAUSED_BY, at(5, NODE_LOST)])
+    assert [cause for *_, cause in fabric_oom.node_losses(events)] == ["oom"]
+
+
+def test_a_node_that_left_with_nothing_explaining_it_is_not_written_off_to_the_stand():
+    assert [cause for *_, cause in fabric_oom.node_losses(fabric_oom.parse([NODE_LOST]))] == [""]
+
+
+def test_a_zookeeper_loss_long_before_the_node_left_does_not_explain_it():
+    events = fabric_oom.parse([ZK_SUSPENDED, at(0, NODE_LOST).replace("2026-10-22", "2026-10-30")])
+    assert [cause for *_, cause in fabric_oom.node_losses(events)] == [""]
