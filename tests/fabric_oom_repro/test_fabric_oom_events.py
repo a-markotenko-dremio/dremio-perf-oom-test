@@ -1,4 +1,7 @@
-"""Offline tests of fabric_oom_repro.fabric_oom on lines of the server.log of the stand (runs of 2026-10-22)."""
+"""
+Offline tests of fabric_oom_repro.fabric_oom on lines of the server.log of the stand: 25.2.0 (runs of 2026-10-22 and
+2026-10-27) and 27.0.0-main (runs of 2026-10-29), which logs the same bug through other loggers.
+"""
 from datetime import datetime, timedelta
 
 from fabric_oom_repro import fabric_oom
@@ -24,6 +27,33 @@ ARBITER_FAILED = [
     "  (org.apache.arrow.memory.OutOfMemoryException) MemoryArbiter detected no memory available",
 ]
 UNREGISTERED = "2026-10-27 02:08:55,355 [executor-selection-service-queue] INFO  tracker.logger - nodesUnregistered d25-2-0-j21-14G-4cpu:45678"
+# 27.0.0-main (run of 2026-10-29, 3 of 3 reproduced): MessageDecoder only logs INFO and the OOM arrives through
+# RpcExceptionHandler, whose line also carries the netty memory and the allocators, then ExecTransportExceptionHandler
+DIRECT_EXHAUSTED = (
+    "2026-10-29 18:33:15,212 [FABRIC-4] ERROR c.d.exec.rpc.RpcExceptionHandler - Direct memory exhausted on channel "
+    "[id: 0x50a8155f, L:/10.97.177.24:45678 - R:/192.168.1.66:48462]: netty direct memory used 6143 of 6144 MB; outbound "
+    "queued 0 messages (0 bytes), 0 requests awaiting response; connection allocator fabric-allocator allocated 5 MB "
+    "(peak 37 MB); RPC allocators (allocated/peak MB): fabric-allocator=5/37, fragment-work-manager=494/494, "
+    "send-rpc-buffer=0/31; top 10 root allocators (allocated/peak MB): "
+    "queue-3cd7d794-cfc6-4436-a24f-5d10a60f97ea=4477/5592, fragment-work-manager=494/494, fabric-allocator=5/37, "
+    "query-planning=0/13, WebServer=0/0, queue-dbaf7ce2-3698-49fe-b86a-58cf42c8b006=0/0, flight-service-allocator=0/0, "
+    "queue-7b25f7e3-39a3-4b07-b878-7e1097b7bd88=0/0, sysflight-producer=0/3, coord-exec-rpc=0/0")
+TRANSPORT = ("2026-10-29 18:33:15,213 [FABRIC-4] ERROR c.d.s.e.r.ExecTransportExceptionHandler - Transport-level exception "
+             "detected on connection /10.97.177.24:45678 <--> /192.168.1.66:48462 (fabric server). Failing all active fragments.")
+OOM_STACK = "org.apache.arrow.memory.OutOfMemoryException: Failure allocating buffer."
+CAUSED_BY_27 = ("Caused by: io.netty.util.internal.OutOfDirectMemoryError: failed to allocate 4194304 byte(s) of direct "
+                "memory (used: 6442297855, max: 6442450944)")
+DECODER_INFO = ("2026-10-29 18:33:16,514 [FABRIC-4] INFO  com.dremio.exec.rpc.MessageDecoder - Channel is closed, "
+                "discarding remaining 339254 byte(s) in buffer.")
+SHRINK_27 = ("2026-10-29 18:32:30,774 [MA-memory-monitor-thread] INFO  c.d.sabot.memory.MemoryArbiterImpl - Asking operator "
+             "151c6ee3-64eb-b641-43e1-fd18eda34100:frag:2:11:2(shrinkable memory: 417005568)(heap shrinkable memory: 438192)"
+             "(operator state: CAN_CONSUME NONE) to shrink memory due to direct memory pressure. Current shrinkable memory "
+             "is 376897536 bytes (359 MiB)")
+# the eighth job of the same run: the bug does not give every victim the same error
+CHANNEL_CLOSED = ("2026-10-29 18:36:46,440 [Fabric-RPC-Offload15] INFO  c.d.exec.work.foreman.AttemptManager - "
+                  "151c6e21-629c-7fb1-11fd-e1aa842cd000: State change requested RUNNING --> FAILED, Exception "
+                  "com.dremio.common.exceptions.UserRemoteException: SYSTEM ERROR: ChannelClosedException: [FABRIC]: "
+                  "Channel closed /10.103.137.130:34498 <--> /192.168.1.75:45678 (fabric client)")
 
 
 def at(seconds, line=FAILED, job="15259175-55ba-db94-09e0-47a26c46d400"):
@@ -91,7 +121,34 @@ def test_the_events_of_the_containers_are_merged_in_time_order():
     assert len(merged["fabric_oom"]) == 1
 
 
+def test_the_fabric_oom_of_27_0_is_counted_although_the_decoder_no_longer_logs_it():
+    events = fabric_oom.parse([DIRECT_EXHAUSTED, TRANSPORT, OOM_STACK, "\tat io.netty...", CAUSED_BY_27, DECODER_INFO])
+    assert events["fabric_oom"] == [(datetime(2026, 10, 29, 18, 33, 15, 213000), 4194304, 6442297855, 6442450944)]
+
+
+def test_the_27_0_oom_is_counted_on_the_lines_the_zgrep_pattern_keeps():
+    """The parser reads the zgrep output, where the transport line in between is gone."""
+    events = fabric_oom.parse([DIRECT_EXHAUSTED, CAUSED_BY_27])
+    assert events["fabric_oom"] == [(datetime(2026, 10, 29, 18, 33, 15, 212000), 4194304, 6442297855, 6442450944)]
+
+
+def test_the_decoder_closing_the_channel_after_the_oom_is_not_a_second_event():
+    assert not fabric_oom.parse([DECODER_INFO, CAUSED_BY_27])["fabric_oom"]
+
+
+def test_a_27_0_shrink_request_is_counted():
+    assert fabric_oom.parse([SHRINK_27])["shrink"] == [
+        (datetime(2026, 10, 29, 18, 32, 30, 774000), "151c6ee3-64eb-b641-43e1-fd18eda34100")]
+
+
+def test_a_victim_whose_channel_was_closed_is_a_failure_without_a_named_cause():
+    events = fabric_oom.parse([DIRECT_EXHAUSTED, CAUSED_BY_27, CHANNEL_CLOSED])
+    assert events["job_failed"] == [
+        (datetime(2026, 10, 29, 18, 36, 46, 440000), "151c6e21-629c-7fb1-11fd-e1aa842cd000", "FAILED", "")]
+
+
 def test_the_zgrep_pattern_keeps_every_line_the_parser_needs():
     import re
-    for line in (FABRIC_ERROR, CAUSED_BY, SHRINK, *ARBITER_FAILED, PLANNING, FAILED, UNREGISTERED):
+    for line in (FABRIC_ERROR, CAUSED_BY, SHRINK, *ARBITER_FAILED, PLANNING, FAILED, UNREGISTERED,
+                 DIRECT_EXHAUSTED, CAUSED_BY_27, SHRINK_27, CHANNEL_CLOSED):
         assert re.search(fabric_oom.PATTERN, line), line

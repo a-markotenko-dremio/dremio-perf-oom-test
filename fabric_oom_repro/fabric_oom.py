@@ -2,10 +2,15 @@
 The fabric direct-memory OOM (DX-127946) in the Dremio log, told apart from the other memory failures of a run.
 
 The bug is one event: a fabric (RPC) read on a FABRIC-n thread fails with netty's OutOfDirectMemoryError because direct
-memory is exhausted (used + requested > max). An OutOfDirectMemoryError on another thread or a MessageDecoder error with
-another cause is not the bug. A job failure carries its cause when the log names one: "arbiter" (the memory arbiter
-cancelled the greediest query; its message is inside the exception of the failure line) or "planning" (a memory failure
-in execution planning), so a test can say which mechanism failed a query.
+memory is exhausted (used + requested > max), so it is counted for an ERROR line on such a thread whose cause is that
+error. The logger of that line differs per version (25.2: MessageDecoder; 27.0: RpcExceptionHandler, which also logs the
+memory and the allocators, and ExecTransportExceptionHandler), so it is not part of the rule. An OutOfDirectMemoryError on
+another thread, or a fabric error with another cause, is not the bug.
+
+A job failure carries its cause when the log names one: "arbiter" (the memory arbiter cancelled the greediest query; its
+message is inside the exception of the failure line) or "planning" (a memory failure in execution planning), so a test
+can say which mechanism failed a query. The job error of a query the bug killed is not one text: on 27.0 the same OOM
+gave seven jobs an OUT_OF_MEMORY error and one a SYSTEM ERROR with a ChannelClosedException, so neither names a cause.
 """
 import re
 from collections import Counter
@@ -16,13 +21,14 @@ OOM = re.compile(r"OutOfDirectMemoryError: failed to allocate (?P<size>\d+) byte
 JOB = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 STATE_CHANGE = re.compile(rf"(?P<job>{JOB}): State change requested \w+ --> (?P<state>FAILED|CANCELED)")
 SHRINK = re.compile(rf"Asking operator (?P<job>{JOB}):frag")
+DIRECT_EXHAUSTED = "Direct memory exhausted on channel"  # 27.0: the ERROR line that carries the netty memory and the allocators
 ARBITER_CANCEL = "MemoryArbiter detected no memory available"
 PLANNING = "MemoryAllocationUtilities"  # the logger of a memory failure in execution planning
 UNREGISTERED = re.compile(r"nodesUnregistered (?P<node>\S+)")
 EVENTS = ("fabric_oom", "shrink", "job_failed", "node_unregistered")
 # the zgrep pattern that keeps every line parse() needs
-PATTERN = "|".join(["MessageDecoder", "OutOfDirectMemoryError", ARBITER_CANCEL, "Asking operator", "State change requested",
-                    PLANNING, "nodesUnregistered"])
+PATTERN = "|".join(["MessageDecoder", DIRECT_EXHAUSTED, "OutOfDirectMemoryError", ARBITER_CANCEL, "Asking operator",
+                    "State change requested", PLANNING, "nodesUnregistered"])
 
 
 def parse(lines):
@@ -38,7 +44,7 @@ def parse(lines):
         m = LINE.match(line)
         if m:
             ts, message = datetime.strptime(m["ts"], "%Y-%m-%d %H:%M:%S,%f"), m["message"]
-            fabric_error = ts if m["thread"].startswith("FABRIC-") and m["logger"].endswith("MessageDecoder") else None
+            fabric_error = ts if m["thread"].startswith("FABRIC-") and m["level"] == "ERROR" else None
             failure = None
             if m["level"] == "ERROR" and m["logger"].endswith(PLANNING):
                 planning_failed.add(m["thread"].split(":")[0])
