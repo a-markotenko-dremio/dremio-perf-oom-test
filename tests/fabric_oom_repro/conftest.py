@@ -2,6 +2,7 @@
 import pytest
 
 import settings
+from dremio_client import sql_value
 from fabric_oom_repro.generate_oom_data import TABLES
 from fabric_oom_repro.tables import register
 
@@ -9,11 +10,13 @@ from fabric_oom_repro.tables import register
 @pytest.fixture(scope="module")
 def system_options(dremio):
     """System options of the run (every job is its own session, so ALTER SESSION would not reach the query)."""
-    options = {"planner.width.max_per_node": settings.OOM_WIDTH}
+    # The result cache answers a repeat of the same query from the run before in a second (TTL 24 h, seen on
+    # 2026-10-30: three sessions measured nothing), so the queries of the workload are executed every time.
+    options = {"planner.width.max_per_node": settings.OOM_WIDTH, "dremio.results_cache_rest_enabled": False}
     if settings.OOM_RESERVE_PCT is not None:
         options["exec.spillable.operators.pct_free_memory_watermark"] = float(settings.OOM_RESERVE_PCT)
     for name, value in options.items():
-        dremio.run_sql(f'ALTER SYSTEM SET "{name}" = {value}')
+        dremio.run_sql(f'ALTER SYSTEM SET "{name}" = {sql_value(value)}')
     yield options
     for name in options:
         dremio.run_sql(f'ALTER SYSTEM RESET "{name}"')

@@ -6,6 +6,11 @@ import urllib.parse
 import requests
 
 
+def sql_value(value):
+    """A Python value inside an SQL statement: a bool is the keyword true/false, not Python's True/False."""
+    return str(value).lower() if isinstance(value, bool) else value
+
+
 class JobFailed(AssertionError):
     """A SQL job ended FAILED or CANCELED (its errorMessage is in the text)."""
 

@@ -48,3 +48,9 @@ def test_a_missing_source_is_created(catalog, monkeypatch):
     monkeypatch.setattr(dremio_client.requests, "get", lambda url, **kw: response(data=[]))
     assert client.ensure_nas_source(SOURCE, STAND) is True
     assert [(kind, body["config"]) for kind, _, body in calls] == [("post", {"path": str(STAND)})]
+
+
+def test_a_bool_option_is_written_as_an_sql_keyword():
+    """ALTER SYSTEM SET "dremio.results_cache_rest_enabled" = False is a syntax error; false is not."""
+    assert dremio_client.sql_value(False) == "false"
+    assert dremio_client.sql_value(24) == 24 and dremio_client.sql_value(4.0) == 4.0
