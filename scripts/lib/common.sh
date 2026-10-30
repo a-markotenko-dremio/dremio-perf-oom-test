@@ -14,6 +14,10 @@ detect_container_cli() {
     else die "neither incus nor lxc found in PATH"; fi
 }
 
+# The storages under STORAGE_ROOT of deployed containers, also of containers that no longer exist: the
+# directories named like default_container_name (d<version>-<java>-<memory>-<cpus>cpu).
+container_storages() { compgen -G "$(default STORAGE_ROOT)/d*-*cpu" || true; }
+
 # Runs a command in the container NAME.
 cx() { $CT exec "$NAME" -- "$@"; }
 

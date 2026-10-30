@@ -22,10 +22,10 @@ esac
 detect_container_cli
 
 mapfile -t names < <($CT list -c n --format csv)
-if (( ${#names[@]} )); then
-    $CT delete --force "${names[@]}"
-    for name in "${names[@]}"; do rm -rf "$(storage_path "$name")"; done
-fi
+(( ${#names[@]} == 0 )) || $CT delete --force "${names[@]}"
+# by name, not per container: the storages of stands whose containers are already gone are left behind too
+mapfile -t storages < <(container_storages)
+(( ${#storages[@]} == 0 )) || rm -rf "${storages[@]}"
 nat_rules "$(own_address "$PEER")" | drop_nat_rules
 
 if [[ ${1:-} != --local ]]; then
