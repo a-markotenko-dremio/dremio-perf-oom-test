@@ -27,7 +27,8 @@ DATA=$(default OOM_REPRO_DATA)
 incus stop --all
 ssh -n "$EXECUTOR_HOST" "incus stop --all"
 ssh -n "$EXECUTOR_HOST" "cd $EXECUTOR_REPO && git pull --ff-only"
-S3=$(scripts/fabric_oom_repro/setup_dist_store.sh "$EXECUTOR_HOST" | tail -1)  # the distributed store of the stand
+# the distributed store of the stand, as this host reaches it and as the executor host does
+read -r S3_LOCAL S3_REMOTE < <(scripts/fabric_oom_repro/setup_dist_store.sh "$EXECUTOR_HOST" | tail -1)
 # --no-start: the node is started once, by configure_cluster_node.sh, with the cluster keys already in dremio.conf
 ./deploy_dremio.sh --package "$TARBALL" --name "$COORDINATOR" --java-version $JAVA --cpus $COORDINATOR_CPUS \
     --heap-memory-mb $COORDINATOR_HEAP_MB --direct-memory-mb $COORDINATOR_DIRECT_MB --container-memory-mb $COORDINATOR_MB \
@@ -41,9 +42,9 @@ wait $coordinator_deploy
 wait $executor_deploy
 
 # cluster config (mounts the data directory into both nodes and starts Dremio), then wait for the executor and the UI
-scripts/fabric_oom_repro/configure_cluster_node.sh "$COORDINATOR" "$EXECUTOR_HOST" coordinator "$S3" &
+scripts/fabric_oom_repro/configure_cluster_node.sh "$COORDINATOR" "$EXECUTOR_HOST" coordinator "$S3_LOCAL" &
 coordinator_config=$!
-ssh -n "$EXECUTOR_HOST" "cd $EXECUTOR_REPO && scripts/fabric_oom_repro/configure_cluster_node.sh $EXECUTOR $(hostname) executor $S3" &
+ssh -n "$EXECUTOR_HOST" "cd $EXECUTOR_REPO && scripts/fabric_oom_repro/configure_cluster_node.sh $EXECUTOR $(hostname) executor $S3_REMOTE" &
 executor_config=$!
 wait $coordinator_config
 wait $executor_config
@@ -61,4 +62,4 @@ echo "UI $DREMIO_URL"
 # the data set on both hosts
 [[ -d $DATA/TestCaseData ]] || .venv/bin/python -m fabric_oom_repro.generate_oom_data "$DATA" --scale "$(default OOM_REPRO_SCALE)"
 ssh -n "$EXECUTOR_HOST" "mkdir -p $DATA" && rsync -a "$DATA/" "$EXECUTOR_HOST:$DATA/"
-echo "stand up: $COORDINATOR on $(hostname), $EXECUTOR on $EXECUTOR_HOST, data set $DATA, dist store $S3"
+echo "stand up: $COORDINATOR on $(hostname), $EXECUTOR on $EXECUTOR_HOST, data set $DATA, dist store $S3_REMOTE"

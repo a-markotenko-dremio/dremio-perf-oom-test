@@ -2,8 +2,11 @@
 # Brings up the S3 server that holds the distributed store (paths.dist) of the stand, in its own container on this
 # host, and publishes it on PEER_HOST's route of this host so that the node on the other host reaches it too.
 #   scripts/fabric_oom_repro/setup_dist_store.sh PEER_HOST
-# Prints the endpoint as host:port, the form core-site.xml wants (no scheme). Safe to run again: the container is
-# recreated, so every stand starts from an empty store.
+# Prints two endpoints as "LOCAL REMOTE", in the host:port form core-site.xml wants (no scheme): the address of the
+# store's container for the node on this host, and the published address of this host for the node on PEER_HOST.
+# They differ because a node reaches its own host's address through a loopback alias (configure_cluster_node.sh adds
+# it so that the node can reach its own published ports), and that alias also hides every other service published on
+# that address - the store among them. Safe to run again: the container is recreated, so every stand starts empty.
 # The server is the S3 gateway of SeaweedFS. MinIO, which the Dremio documentation uses as its S3-compatible
 # example, was archived in 2026: dl.min.io answers 410 and the images are gone from Docker Hub.
 set -euo pipefail
@@ -53,7 +56,9 @@ cx bash -euc "
     for _ in \$(seq 60); do weed shell -master=localhost:9333 <<<'s3.bucket.list' >/dev/null 2>&1 && break; sleep 1; done
     weed shell -master=localhost:9333 <<<'s3.bucket.create -name $BUCKET' >/dev/null"
 
-forward_ports "$HOST_IP" "$(container_ip)" "$PORT"
-add_loopback_alias "$HOST_IP"
-curl -fsS --retry 30 --retry-delay 1 --retry-connrefused -o /dev/null -w "" "http://$HOST_IP:$PORT/" || true
-echo "$HOST_IP:$PORT"
+STORE_IP=$(container_ip)
+forward_ports "$HOST_IP" "$STORE_IP" "$PORT"
+# an S3 server answers an unsigned request with 403: it is up and reachable
+for _ in $(seq 60); do [[ $(curl -s -o /dev/null -w "%{http_code}" "http://$STORE_IP:$PORT/") == 403 ]] && break; sleep 1; done
+[[ $(curl -s -o /dev/null -w "%{http_code}" "http://$STORE_IP:$PORT/") == 403 ]] || die "the store does not answer on $STORE_IP:$PORT"
+echo "$STORE_IP:$PORT $HOST_IP:$PORT"
