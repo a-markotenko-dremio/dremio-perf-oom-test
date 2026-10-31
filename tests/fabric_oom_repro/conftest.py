@@ -10,9 +10,10 @@ from fabric_oom_repro.tables import register
 @pytest.fixture(scope="module")
 def system_options(dremio):
     """System options of the run (every job is its own session, so ALTER SESSION would not reach the query)."""
-    # The result cache answers a repeat of the same query from the run before in a second (TTL 24 h, seen on
-    # 2026-10-30: three sessions measured nothing), so the queries of the workload are executed every time.
-    options = {"planner.width.max_per_node": settings.OOM_WIDTH, "dremio.results_cache_rest_enabled": False}
+    # The result cache is left as the stand has it: switching it off stopped the bug from reproducing (7 of 7 runs
+    # with it on 2026-10-30, 0 of 4 with it off). The queries are not answered from it either, because every run sends
+    # them with its own marker (fabric_oom_repro.workload.marked).
+    options = {"planner.width.max_per_node": settings.OOM_WIDTH}
     if settings.OOM_RESERVE_PCT is not None:
         options["exec.spillable.operators.pct_free_memory_watermark"] = float(settings.OOM_RESERVE_PCT)
     for name, value in options.items():

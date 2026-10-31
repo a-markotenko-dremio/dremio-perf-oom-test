@@ -90,6 +90,15 @@ def over_the_limit(outcomes):
     return sorted(o.job for o in outcomes if o.state == OVER_THE_LIMIT)
 
 
+def marked(sql, marker):
+    """The query with the marker of its run in front of its result: the same text is then never sent twice, so the
+    result cache cannot answer a run from the run before. The cache stays on because it is part of what reproduces the
+    bug: with it the fabric OOM happened in 7 of 7 runs of 2026-10-30, without it in 0 of 4 (the same workload then
+    spilled and every query was served, see fabric-oom-test-plan.md). Every query of the run returns one row, so the
+    wrapper costs nothing."""
+    return f"SELECT '{marker}' AS run, * FROM ({sql}) m"
+
+
 def run_query(dremio, sql, limit=None):
     started = time.time()
     try:
@@ -101,13 +110,15 @@ def run_query(dremio, sql, limit=None):
     return Outcome(job, state, time.time() - started)
 
 
-def run_workload(dremio, innocent=None, limit=None):
-    """Runs QUERIES at the same time and, if given, `innocent` INNOCENT_DELAY seconds later; their outcomes. A query
-    that takes longer than `limit` seconds is cancelled and ends OVER_THE_LIMIT; without a limit it runs to its end."""
+def run_workload(dremio, innocent=False, limit=None):
+    """Runs QUERIES at the same time and, with `innocent`, INNOCENT INNOCENT_DELAY seconds later; their outcomes. The
+    queries carry the marker of this run, so none of them is answered from the result cache. A query that takes longer
+    than `limit` seconds is cancelled and ends OVER_THE_LIMIT; without a limit it runs to its end."""
+    marker = time.strftime("%Y%m%d-%H%M%S")  # what makes the queries of this run unique
     with ThreadPoolExecutor(len(QUERIES)) as pool:
-        heavy = [pool.submit(run_query, dremio, sql, limit) for sql in QUERIES]
+        heavy = [pool.submit(run_query, dremio, marked(sql, marker), limit) for sql in QUERIES]
         small = None
         if innocent:
             time.sleep(INNOCENT_DELAY)
-            small = run_query(dremio, innocent, limit)
+            small = run_query(dremio, marked(INNOCENT, marker), limit)
     return [f.result() for f in heavy], small

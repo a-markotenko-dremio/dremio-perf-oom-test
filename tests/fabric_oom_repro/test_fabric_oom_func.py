@@ -29,7 +29,7 @@ import pytest
 import settings
 from fabric_oom_repro import fabric_oom
 from fabric_oom_repro.logs import log_lines
-from fabric_oom_repro.workload import (INNOCENT, describe, over_the_limit, run_workload, slowest_completed,
+from fabric_oom_repro.workload import (describe, over_the_limit, run_workload, slowest_completed,
                                        unrelated_failures)
 
 Run = namedtuple("Run", "outcomes innocent events unrelated cut summary")
@@ -39,8 +39,7 @@ Run = namedtuple("Run", "outcomes innocent events unrelated cut summary")
 def run(dremio, tables, system_options, containers):
     """The workload, with the events it added to the logs of all containers merged in time order."""
     before = {c: len(log_lines(c, fabric_oom.PATTERN)) for c in containers}
-    outcomes, innocent = run_workload(dremio, INNOCENT if settings.OOM_INNOCENT else None,
-                                      settings.OOM_MAX_QUERY_SECONDS or None)
+    outcomes, innocent = run_workload(dremio, settings.OOM_INNOCENT, settings.OOM_MAX_QUERY_SECONDS or None)
     events = fabric_oom.merge({c: fabric_oom.parse(log_lines(c, fabric_oom.PATTERN)[n:]) for c, n in before.items()})
     unrelated, cut = unrelated_failures(outcomes), over_the_limit(outcomes)
     summary = (f"{describe(system_options, outcomes)}\n"
