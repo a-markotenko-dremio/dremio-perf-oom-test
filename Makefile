@@ -1,7 +1,7 @@
 VENV := .venv
 PYTHON := $(VENV)/bin/python
 
-.PHONY: test test-container create-container venv clean data report scatter fabric-oom fabric-oom-stand fabric-oom-repro fabric-oom-func fabric-oom-feature fabric-oom-clean
+.PHONY: test test-container create-container venv clean data report scatter fabric-oom fabric-oom-stand fabric-oom-repro fabric-oom-func fabric-oom-feature fabric-oom-clean fabric-oom-report
 
 test: $(VENV)/.installed
 	$(PYTHON) -m pytest -v -rs tests
@@ -59,6 +59,7 @@ create-container:
 #   OOM_ESCALATION=1 make fabric-oom-func RUNS=3     (fix verification on the stand that is up, escalation on; 0: read pause alone)
 #   make fabric-oom-feature RUNS=1                   (the same workload with no time limit: does the fix serve every query)
 #   make fabric-oom-repro OOM_DATA=/mnt/.../other    (the repro on another data set; on a fixed build with both changes off: the bug must still reproduce)
+#   make fabric-oom-report                           (a table of every run from the logs in data/, with how to read it)
 #   make fabric-oom-clean                            (remove the stand from both hosts, keep the generated data)
 # A run that fails (the repro test fails when the bug does not reproduce) does not stop the next; the exit status is the last failure.
 RUNS ?= 3
@@ -75,6 +76,9 @@ fabric-oom-repro fabric-oom-func fabric-oom-feature: fabric-oom-%: $(VENV)/.inst
 
 fabric-oom-clean:
 	scripts/fabric_oom_repro/clean_fabric_oom_stand.sh
+
+fabric-oom-report: $(VENV)/.installed
+	$(PYTHON) -m fabric_oom_repro.run_table data
 
 # SVG report of the results, e.g.: make report CSV="data/test_results_den.csv data/test_results_home4.csv"
 CSV ?= data/test_results.csv
