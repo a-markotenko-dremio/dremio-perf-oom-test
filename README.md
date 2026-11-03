@@ -105,5 +105,5 @@ make fabric-oom-clean
 - `fabric-oom-func`: the fix verification on the stand that is up; `OOM_ESCALATION=1` escalation on, `0` the read pause alone.
 - `fabric-oom-feature`: the same workload with no time limit: does the fix serve every query.
 - `fabric-oom-repro OOM_DATA=...`: the repro on another data set; on a fixed build with both changes off the bug must still reproduce.
-- `fabric-oom-report`: a table of every run from the logs in `data/`, with how to read it.
+- `fabric-oom-report`: a table with a row for every pytest session of every run from the logs in `data/` (`func` has three sessions per run), with how to read it.
 - `fabric-oom-clean`: removes the stand from both hosts (every container, also the S3 servers with their buckets), keeps the generated data.

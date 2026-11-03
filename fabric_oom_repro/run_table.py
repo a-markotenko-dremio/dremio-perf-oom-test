@@ -1,7 +1,8 @@
 """
-A table of every run of the fabric OOM stand from the pytest logs of `make fabric-oom-*` (data/fabric-oom-<case>-<time>.log):
-when it ran, how long it took and how it ended, read from the summary the test prints and from pytest's last line.
-A log without that line is a run still going or killed, and gets no counts.
+A table of every pytest session of the fabric OOM stand from the logs of `make fabric-oom-*` (data/fabric-oom-<case>-<time>.log):
+when the run started, how long the session took and how it ended, read from the summary the test prints and from pytest's
+last line. A log holds one session (repro, feature) or three (func). A session without that line is still going or was
+killed, and gets no counts.
 
   .venv/bin/python -m fabric_oom_repro.run_table [DIR]      (default: data/; make fabric-oom-report)
 """
@@ -16,10 +17,13 @@ VERDICT = re.compile(r"^=+ (?P<counts>\d+ (?:passed|failed).*?) in (?P<seconds>[
 OUTCOMES = re.compile(r"^(?:E +)?outcomes: (?P<list>\[.*\])$", re.M)
 EVENTS = re.compile(r"^(?:E +)?events: (?P<events>\{.*?\}), failures by cause: (?P<causes>\{.*?\})", re.M)
 LINE_COUNTS = re.compile(r"^(?:E +)?new log lines per container: (?P<counts>\{.*\})$", re.M)  # the summary before 2026-10-29
-COLUMNS = ("run", "case", "took", "verdict", "fabric OOM", "arbiter", "completed", "over limit", "failed", "shrink")
+SESSION_START = re.compile(r"^=+ test session starts =+$", re.M)
+COLUMNS = ("run", "case", "session", "took", "verdict", "fabric OOM", "arbiter", "completed", "over limit", "failed", "shrink")
 LEGEND = """\
 How to read the table:
-- run: the start of the run in the host's local time (from the log name); case: repro = the reproduction (F-01), func = the
+- run: the start of the run in the host's local time (from the log name); session: the pytest session of the run, func has
+  three (the 4 % arbiter reserve, the default reserve, the small query next to the 8 with the 4 % reserve), repro and feature one;
+  case: repro = the reproduction (F-01), func = the
   fix verification (F-03..F-09, P-06), feature = the run without a time limit (P-07); took: the time pytest reported.
 - verdict: pytest's count. For repro "passed" means the bug reproduced (F-01 passes when it does), for func and feature
   "passed" means the fix criteria held. "no result" is a log without pytest's last line: the run is still going or was killed.
@@ -29,12 +33,17 @@ How to read the table:
   OOM_MAX_QUERY_SECONDS = 600 s for func, none for feature), or failed with an error."""
 
 
-def row(path):
-    """One row per log: the counts of the summary the test printed, or only the name when the run has no result yet."""
+def rows(path):
+    """One row per pytest session of a log (a log without the header line of pytest is one session)."""
     name = NAME.search(path.name)
-    text = path.read_text()
+    parts = SESSION_START.split(path.read_text())
+    return [row(name, number, text) for number, text in enumerate(parts[1:] or parts, 1)]
+
+
+def row(name, number, text):
+    """The counts of the summary the test printed in a session, or only the name when the session has no result yet."""
     verdict = VERDICT.search(text)
-    r = {"run": datetime.strptime(name["when"], "%Y%m%d-%H%M%S").strftime("%Y-%m-%d %H:%M"), "case": name["case"],
+    r = {"run": datetime.strptime(name["when"], "%Y%m%d-%H%M%S").strftime("%Y-%m-%d %H:%M"), "case": name["case"], "session": number,
          "took": str(timedelta(seconds=round(float(verdict["seconds"])))) if verdict else "",
          "verdict": verdict["counts"].split(",")[0] if verdict else "no result (running or killed)"}
     if outcomes := OUTCOMES.search(text):
@@ -58,7 +67,7 @@ def table(rows):
 
 
 def main(directory):
-    print(table(sorted((row(p) for p in Path(directory).glob("fabric-oom-*.log")), key=lambda r: r["run"])))
+    print(table(sorted((r for p in Path(directory).glob("fabric-oom-*.log") for r in rows(p)), key=lambda r: (r["run"], r["session"]))))
     print("\n" + LEGEND)
 
 
