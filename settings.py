@@ -30,6 +30,13 @@
                    (test_every_query_of_the_workload_is_served); it then takes as long as the queries need.
   OOM_INNOCENT     1 runs the small query next to the 8 of the fix verification (default 0: with it the fabric OOM
                    did not reproduce in 2 of 2 runs, without it in 5 of 5)
+  OOM_ESCALATION   1 or 0 sets exec.spillable.operators.direct_escalation.enabled (and .millis to OOM_ESCALATION_MILLIS)
+                   for the run; unset leaves the build's defaults (the options do not exist on an unfixed build, so
+                   they are set only when asked). The read pause is a JVM flag of the stand: OOM_JAVA_OPTS of
+                   scripts/fabric_oom_repro/setup_fabric_oom_stand.sh.
+  OOM_ESCALATION_MILLIS
+                   exec.spillable.operators.direct_escalation.millis of the run (default 2000, the product default): the
+                   pause that triggers an escalation and what every escalation of the run is checked against (F-06)
   REPORT_CSV       CSV the run is appended to (default data/test_results.csv); the traceback log of a failed run goes next to it
   HEAP_MB / DIRECT_MB / JVM_VERSION / JAVA_IMAGE / CONTAINER_RAM_MB / CONTAINER_CPUS
                    what the Dremio under test was configured with (set by deploy_dremio.sh and
@@ -78,5 +85,7 @@ OOM_WIDTH = int(os.environ.get("OOM_WIDTH", "24"))
 OOM_RESERVE_PCT = os.environ.get("OOM_RESERVE_PCT")
 OOM_MAX_QUERY_SECONDS = int(os.environ.get("OOM_MAX_QUERY_SECONDS", "600"))
 OOM_INNOCENT = os.environ.get("OOM_INNOCENT", "0") == "1"
+OOM_ESCALATION = os.environ["OOM_ESCALATION"] == "1" if "OOM_ESCALATION" in os.environ else None  # see the system_options fixture
+OOM_ESCALATION_MILLIS = int(os.environ.get("OOM_ESCALATION_MILLIS", "2000"))
 
 PRE_SQL = split_statements(os.environ.get("PRE_SQL", ""))

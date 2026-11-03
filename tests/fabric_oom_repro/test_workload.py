@@ -44,7 +44,7 @@ def test_a_failure_on_the_input_file_is_unrelated():
 
 
 def test_a_query_the_run_cut_off_is_not_a_failure_of_the_product():
-    """The time limit is the run's own, so the query it cancels belongs to TC-11 and dirties nothing."""
+    """The time limit is the run's own, so the query it cancels belongs to P-06 and dirties nothing."""
     assert not unrelated_failures([CUT_OFF, DONE])
     assert over_the_limit([CUT_OFF, DONE]) == ["151afcf2-8d57-0cb9-dff6-e58cc20ef700"]
 

@@ -55,9 +55,10 @@ create-container:
 # The two-host stand of the fabric direct-memory OOM repro (DX-127946) from a Dremio tarball, and its runs (run on the
 # coordinator host; the pytest output of every run goes to data/fabric-oom-<case>-<time>.log), e.g.:
 #   make fabric-oom TARBALL=/mnt/ubuntu-var/nfs/shared/Downloads/dremio-enterprise-25.2.0-202410241428100111-a963b970.tar.gz
-#   make fabric-oom-func RUNS=3                      (fix verification on the stand that is up)
+#   OOM_JAVA_OPTS=-Ddremio.rpc.pause_reads_on_direct_oom=true make fabric-oom-stand TARBALL=...   (a build with the fix: read pause on)
+#   OOM_ESCALATION=1 make fabric-oom-func RUNS=3     (fix verification on the stand that is up, escalation on; 0: read pause alone)
 #   make fabric-oom-feature RUNS=1                   (the same workload with no time limit: does the fix serve every query)
-#   make fabric-oom-repro OOM_DATA=/mnt/.../other    (the repro on another data set)
+#   make fabric-oom-repro OOM_DATA=/mnt/.../other    (the repro on another data set; on a fixed build with both changes off: the bug must still reproduce)
 #   make fabric-oom-clean                            (remove the stand from both hosts, keep the generated data)
 # A run that fails (the repro test fails when the bug does not reproduce) does not stop the next; the exit status is the last failure.
 RUNS ?= 3

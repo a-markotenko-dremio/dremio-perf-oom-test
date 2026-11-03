@@ -64,7 +64,7 @@ Outcome = namedtuple("Outcome", "job state seconds")  # state: COMPLETED, or the
 # planning error) or a timeout is not about memory and says nothing about the bug.
 MEMORY_FAILURE = re.compile("OUT_OF_MEMORY ERROR|SYSTEM ERROR: ChannelClosedException|compute nodes became unavailable")
 # The state of a query the run itself cut off after OOM_MAX_QUERY_SECONDS: the product did not fail it, the run ran out
-# of patience, so it is neither a memory failure nor a dirty run (TC-11 reports them, the other tests ignore them).
+# of patience, so it is neither a memory failure nor a dirty run (P-06 reports them, the other tests ignore them).
 OVER_THE_LIMIT = "OVER THE LIMIT: the query did not return within the time the run allows"
 
 
@@ -94,7 +94,7 @@ def marked(sql, marker):
     """The query with the marker of its run in front of its result: the same text is then never sent twice, so the
     result cache cannot answer a run from the run before. The cache stays on because it is part of what reproduces the
     bug: with it the fabric OOM happened in 7 of 7 runs of 2026-10-30, without it in 0 of 4 (the same workload then
-    spilled and every query was served, see fabric-oom-test-plan.md). Every query of the run returns one row, so the
+    spilled and every query was served, see the Risks of test-plan-fabric-direct-memory-oom.md in the QA repository). Every query of the run returns one row, so the
     wrapper costs nothing."""
     return f"SELECT '{marker}' AS run, * FROM ({sql}) m"
 

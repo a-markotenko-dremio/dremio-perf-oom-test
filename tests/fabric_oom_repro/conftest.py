@@ -16,6 +16,9 @@ def system_options(dremio):
     options = {"planner.width.max_per_node": settings.OOM_WIDTH}
     if settings.OOM_RESERVE_PCT is not None:
         options["exec.spillable.operators.pct_free_memory_watermark"] = float(settings.OOM_RESERVE_PCT)
+    if settings.OOM_ESCALATION is not None:  # the options of PR #30766; an unfixed build rejects them
+        options["exec.spillable.operators.direct_escalation.enabled"] = settings.OOM_ESCALATION
+        options["exec.spillable.operators.direct_escalation.millis"] = settings.OOM_ESCALATION_MILLIS
     for name, value in options.items():
         dremio.run_sql(f'ALTER SYSTEM SET "{name}" = {sql_value(value)}')
     yield options

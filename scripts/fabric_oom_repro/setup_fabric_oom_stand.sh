@@ -4,7 +4,9 @@
 #   scripts/fabric_oom_repro/setup_fabric_oom_stand.sh TARBALL      (or: make fabric-oom-stand TARBALL=...)
 # Run on the coordinator host. The containers are named after the tarball (default_container_name of common.sh), so
 # the tests find them by the data device, not by name. The executor host runs its part from its own clone of this
-# repository (git pull first, so push before running).
+# repository (git pull first, so push before running). OOM_JAVA_OPTS are extra JVM options for both nodes, e.g. the
+# read pause of DX-128233 (-Ddremio.rpc.pause_reads_on_direct_oom=true) or its give-up (...max_millis=1000), set at
+# deployment because a JVM flag needs a restart.
 set -euxo pipefail
 REPO=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)
 source "$REPO/scripts/lib/common.sh"
@@ -35,11 +37,11 @@ store=$!
 # --no-start: the node is started once, by configure_cluster_node.sh, with the cluster keys already in dremio.conf
 ./deploy_dremio.sh --package "$TARBALL" --name "$COORDINATOR" --java-version $JAVA --cpus $COORDINATOR_CPUS \
     --heap-memory-mb $COORDINATOR_HEAP_MB --direct-memory-mb $COORDINATOR_DIRECT_MB --container-memory-mb $COORDINATOR_MB \
-    --recreate --no-start &
+    ${OOM_JAVA_OPTS:+--java-opts "$OOM_JAVA_OPTS"} --recreate --no-start &
 coordinator_deploy=$!
 ssh -n "$EXECUTOR_HOST" "cd $EXECUTOR_REPO && ./deploy_dremio.sh --package $TARBALL --name $EXECUTOR --java-version $JAVA \
     --cpus $EXECUTOR_CPUS --heap-memory-mb $EXECUTOR_HEAP_MB --direct-memory-mb $EXECUTOR_DIRECT_MB \
-    --container-memory-mb $EXECUTOR_MB --recreate --no-start" &
+    --container-memory-mb $EXECUTOR_MB ${OOM_JAVA_OPTS:+--java-opts $(printf %q "$OOM_JAVA_OPTS")} --recreate --no-start" &
 executor_deploy=$!
 wait $coordinator_deploy
 wait $executor_deploy

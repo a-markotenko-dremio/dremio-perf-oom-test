@@ -2,13 +2,10 @@
 import shlex
 import subprocess
 
+from fabric_oom_repro import fabric_oom
+
 # the log is rolled to the archive at midnight UTC: the archives come first so a roll during a run keeps the order
 LOGS = "/opt/dremio/log/archive/server.*.log.gz /opt/dremio/log/server.log"
-PATTERNS = {
-    "fabric_oom": "Transport-level exception|Direct memory exhausted|MessageDecoder - |OutOfDirectMemoryError",  # the bug
-    "arbiter_cancel": "no memory available",  # the memory arbiter cancelled the greediest query: not the bug
-    "shrink_requests": "Asking operator",     # the arbiter asked an operator to spill: the pressure the repro needs
-}
 
 
 def log_lines(container, pattern):
@@ -22,9 +19,8 @@ def log_lines(container, pattern):
     return out.stdout.splitlines()
 
 
-def log_count(container, pattern):
-    return len(log_lines(container, pattern))
-
-
-def log_counts(containers):
-    return {c: {name: log_count(c, pattern) for name, pattern in PATTERNS.items()} for c in containers}
+def events_added_by(containers, action):
+    """Runs `action` and returns its result with the events (fabric_oom.parse) it added to the log of every container."""
+    before = {c: len(log_lines(c, fabric_oom.PATTERN)) for c in containers}
+    result = action()
+    return result, {c: fabric_oom.parse(log_lines(c, fabric_oom.PATTERN)[n:]) for c, n in before.items()}

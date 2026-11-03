@@ -1,16 +1,30 @@
 """
-The fabric direct-memory OOM (DX-127946) in the Dremio log, told apart from the other memory failures of a run.
+The fabric direct-memory OOM (DX-127946) in the Dremio log, told apart from the other memory failures of a run, and the
+lines of the two changes that fix it: the read pause (DX-128233, PR #30964) and the MemoryArbiter escalation
+(DX-127978, PR #30766). The test cases are in test-cases/ of the QA repository (the test plan
+test-plan-fabric-direct-memory-oom.md).
 
 The bug is one event: a fabric (RPC) read on a FABRIC-n thread fails with netty's OutOfDirectMemoryError because direct
 memory is exhausted (used + requested > max), so it is counted for an ERROR line on such a thread whose cause is that
 error. The logger of that line differs per version (25.2: MessageDecoder; 27.0: RpcExceptionHandler, which also logs the
 memory and the allocators, and ExecTransportExceptionHandler), so it is not part of the rule. An OutOfDirectMemoryError on
-another thread, or a fabric error with another cause, is not the bug.
+another thread, or a fabric error with another cause, is not the bug. The event carries the kind of allocation that
+failed, by the frames of its stack: "socket_read" (ioBuffer or RecvByteBufAllocator$MaxMessageHandle, the rule of the
+read pause) or "other" (a decode copy, which the fix leaves as it is). The channel failing is its own event: the
+"Transport-level exception" line that fails every fragment on the executor.
 
-A job failure carries its cause when the log names one: "arbiter" (the memory arbiter cancelled the greediest query; its
-message is inside the exception of the failure line) or "planning" (a memory failure in execution planning), so a test
-can say which mechanism failed a query. The job error of a query the bug killed is not one text: on 27.0 the same OOM
-gave seven jobs an OUT_OF_MEMORY error and one a SYSTEM ERROR with a ChannelClosedException, so neither names a cause.
+With the read pause on, a socket read that cannot allocate is a WARN ("Socket read could not allocate ... paused reads
+for N ms (episode N ms, retry N, node total pauses N)") and the channel stays up; after 60 s of failing reads the
+ERROR "still can't allocate ... failing it" precedes the transport failure. The escalation is the WARN "MemoryArbiter
+escalating direct memory pressure: socket reads paused for Nms", followed by the claw-back INFO that lists the top
+queries by memory in cancel order ("Canceling N queries ... top 5: <id> <memory>, ..."): the first N of them are the
+victims. Their texts are taken from the PR diffs; no log of a build with the changes has been read yet.
+
+A job failure carries its cause when the log names one: "arbiter" (the memory arbiter cancelled the greediest query
+because nothing shrinkable was left), "escalation" (it cancelled the query because reads stayed paused; both messages
+are inside the exception of the failure line) or "planning" (a memory failure in execution planning), so a test can say
+which mechanism failed a query. The job error of a query the bug killed is not one text: on 27.0 the same OOM gave
+seven jobs an OUT_OF_MEMORY error and one a SYSTEM ERROR with a ChannelClosedException, so neither names a cause.
 
 A node can leave the cluster without the bug: on this stand the executor runs on the other host and loses its
 ZooKeeper session ("ZK connection suspended"), the coordinator unregisters it and fails every query it was running.
@@ -23,37 +37,66 @@ from datetime import datetime, timedelta
 
 LINE = re.compile(r"(?P<ts>\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3}) \[(?P<thread>[^\]]*)\] +(?P<level>\w+) +(?P<logger>\S+) - (?P<message>.*)")
 OOM = re.compile(r"OutOfDirectMemoryError: failed to allocate (?P<size>\d+) byte\(s\) of direct memory \(used: (?P<used>\d+), max: (?P<max>\d+)\)")
+SOCKET_READ_FRAME = re.compile(r"\.ioBuffer\(|RecvByteBufAllocator\$MaxMessageHandle")  # the frames of a socket read allocation
 JOB = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 STATE_CHANGE = re.compile(rf"(?P<job>{JOB}): State change requested \w+ --> (?P<state>FAILED|CANCELED)")
 SHRINK = re.compile(rf"Asking operator (?P<job>{JOB}):frag")
 DIRECT_EXHAUSTED = "Direct memory exhausted on channel"  # 27.0: the ERROR line that carries the netty memory and the allocators
+TRANSPORT = "Transport-level exception detected"  # the channel failed: every fragment on the executor fails
 ARBITER_CANCEL = "MemoryArbiter detected no memory available"
+ESCALATION_CANCEL = "MemoryArbiter detected that network reads stayed paused because direct memory was exhausted"
 PLANNING = "MemoryAllocationUtilities"  # the logger of a memory failure in execution planning
 UNREGISTERED = re.compile(r"nodesUnregistered (?P<node>\S+)")
 ZK_LOST = re.compile(r"ZK connection (?P<state>suspended|lost)")  # the stand, not the bug: the node left on its own
-EVENTS = ("fabric_oom", "shrink", "job_failed", "node_unregistered", "zk_lost")
+READ_PAUSE = re.compile(r"Socket read could not allocate direct memory on channel (?P<channel>\[[^\]]*\]); paused reads "
+                        r"for (?P<delay>\d+) ms \(episode (?P<episode>\d+) ms, retry (?P<retry>\d+), node total pauses (?P<total>\d+)\)")
+GIVE_UP = re.compile(r"Channel (?P<channel>\[[^\]]*\]) still can't allocate after pausing reads for (?P<episode>\d+) ms "
+                     r"\((?P<retries>\d+) retries\); failing it")
+ESCALATION = re.compile(r"MemoryArbiter escalating direct memory pressure: socket reads paused for (?P<paused>\d+) ?ms")
+CLAW_BACK = re.compile(r"Canceling (?P<count>\d+) queries that together consume .* top \d+: (?P<top>.*)")
+TOP_QUERY = re.compile(rf"(?P<job>{JOB}) (?P<memory>[^,]+)")
+EVENTS = ("fabric_oom", "transport_failure", "read_pause", "pause_gave_up", "escalation", "claw_back", "shrink",
+          "job_failed", "node_unregistered", "zk_lost")
 # the zgrep pattern that keeps every line parse() needs
-PATTERN = "|".join(["MessageDecoder", DIRECT_EXHAUSTED, "OutOfDirectMemoryError", ARBITER_CANCEL, "Asking operator",
+PATTERN = "|".join(["MessageDecoder", DIRECT_EXHAUSTED, "OutOfDirectMemoryError", "ioBuffer", "MaxMessageHandle", TRANSPORT,
+                    "Socket read could not allocate", "still can't allocate", "MemoryArbiter escalating",
+                    "Queries are canceled in order", ARBITER_CANCEL, ESCALATION_CANCEL, "Asking operator",
                     "State change requested", PLANNING, "nodesUnregistered", "ZK connection"])
 
 
 def parse(lines):
     """
-    The events of the lines, in log order: fabric_oom [(ts, size, used, max)], shrink [(ts, job)],
-    job_failed [(ts, job, state, cause)] with cause "arbiter", "planning" or "" (not named in the log),
+    The events of the lines, in log order: fabric_oom [(ts, size, used, max, kind)] with kind "socket_read" or "other",
+    transport_failure [ts], read_pause [(ts, channel, delay_ms, episode_ms, retry, node_total)],
+    pause_gave_up [(ts, channel, episode_ms, retries)], escalation [(ts, paused_ms)],
+    claw_back [(ts, count, [(job, memory)])] with the top queries in cancel order, shrink [(ts, job)],
+    job_failed [(ts, job, state, cause)] with cause "arbiter", "escalation", "planning" or "" (not named in the log),
     node_unregistered [(ts, node)], zk_lost [(ts, state)].
     """
     events = {name: [] for name in EVENTS}
     planning_failed = set()  # jobs whose memory failure happened in execution planning
     fabric_error = failure = None  # the timestamped line whose exception text is being read
+    block_oom = None  # the index of the fabric OOM whose stack is being read, for the kind of its allocation
+    socket_read = False  # a socket read frame was seen in the stack being read
     for line in lines:
         m = LINE.match(line)
         if m:
             ts, message = datetime.strptime(m["ts"], "%Y-%m-%d %H:%M:%S,%f"), m["message"]
             fabric_error = ts if m["thread"].startswith("FABRIC-") and m["level"] == "ERROR" else None
-            failure = None
+            failure = block_oom = None
+            socket_read = False
             if m["level"] == "ERROR" and m["logger"].endswith(PLANNING):
                 planning_failed.add(m["thread"].split(":")[0])
+            elif TRANSPORT in message:
+                events["transport_failure"].append(ts)
+            elif s := READ_PAUSE.search(message):
+                events["read_pause"].append((ts, s["channel"], int(s["delay"]), int(s["episode"]), int(s["retry"]), int(s["total"])))
+            elif s := GIVE_UP.search(message):
+                events["pause_gave_up"].append((ts, s["channel"], int(s["episode"]), int(s["retries"])))
+            elif s := ESCALATION.search(message):
+                events["escalation"].append((ts, int(s["paused"])))
+            elif s := CLAW_BACK.search(message):
+                events["claw_back"].append((ts, int(s["count"]), [(t["job"], t["memory"]) for t in TOP_QUERY.finditer(s["top"])]))
             elif s := SHRINK.search(message):
                 events["shrink"].append((ts, s["job"]))
             elif s := STATE_CHANGE.search(message):
@@ -64,10 +107,17 @@ def parse(lines):
             elif s := ZK_LOST.search(message):
                 events["zk_lost"].append((ts, s["state"]))
         elif fabric_error and (o := OOM.search(line)) and int(o["used"]) + int(o["size"]) > int(o["max"]):
-            events["fabric_oom"].append((fabric_error, int(o["size"]), int(o["used"]), int(o["max"])))
-            fabric_error = None
+            events["fabric_oom"].append((fabric_error, int(o["size"]), int(o["used"]), int(o["max"]),
+                                         "socket_read" if socket_read else "other"))
+            block_oom, fabric_error = len(events["fabric_oom"]) - 1, None
+        elif (fabric_error or block_oom is not None) and SOCKET_READ_FRAME.search(line):
+            socket_read = True
+            if block_oom is not None:
+                events["fabric_oom"][block_oom] = events["fabric_oom"][block_oom][:4] + ("socket_read",)
         elif failure and ARBITER_CANCEL in line:
             events["job_failed"][-1] = failure = failure[:3] + ("arbiter",)
+        elif failure and ESCALATION_CANCEL in line:
+            events["job_failed"][-1] = failure = failure[:3] + ("escalation",)
     return events
 
 
@@ -81,9 +131,9 @@ def failures_around(events, times, after=timedelta(seconds=2), before=timedelta(
     return sorted({job for ts, job, _, _ in events["job_failed"] if any(-before <= ts - t <= after for t in times)})
 
 
-def failures_after_fabric_oom(events, window=timedelta(seconds=2)):
-    """The jobs that failed within `window` after a fabric OOM: the failures the bug caused."""
-    return failures_around(events, [ts for ts, *_ in events["fabric_oom"]], window)
+def failures_after_channel_loss(events, window=timedelta(seconds=2)):
+    """The jobs that failed within `window` after a fabric OOM or a transport failure: the failures the bug caused."""
+    return failures_around(events, [ts for ts, *_ in events["fabric_oom"]] + events["transport_failure"], window)
 
 
 def node_losses(events, window=timedelta(seconds=120)):
@@ -104,12 +154,43 @@ def failures_of_the_stand(events, window=timedelta(seconds=2)):
     return failures_around(events, [ts for ts, _, cause in node_losses(events) if cause == "stand"], window, window)
 
 
-def most_failures_in_one_second(events, ignore=()):
-    """A fabric OOM fails every fragment of the node, so its signature is many jobs failing in the same second."""
-    return max(Counter(ts.replace(microsecond=0) for ts, job, _, _ in events["job_failed"] if job not in ignore).values(),
-               default=0)
+def failures_in_one_second(events, ignore=()):
+    """
+    The groups of two or more jobs that failed in the same second, each job with its cause. A fabric OOM fails every
+    fragment of the node, so its signature is such a group; an escalation that cancels several queries at once is one
+    too, but every job of it carries the escalation.
+    """
+    by_second = {}
+    for ts, job, _, cause in events["job_failed"]:
+        if job not in ignore:
+            by_second.setdefault(ts.replace(microsecond=0), []).append((job, cause))
+    return [group for group in by_second.values() if len(group) > 1]
 
 
-def arbiter_cancellations(events):
-    """The times of the job failures the memory arbiter caused."""
-    return [ts for ts, _, _, cause in events["job_failed"] if cause == "arbiter"]
+def escalations(events, window=timedelta(seconds=2)):
+    """Every escalation with how long reads were paused and the queries it cancelled: the first `count` of the top
+    queries of the claw-back that follows it within `window` (the claw-back line is the one that names them)."""
+    return [(ts, paused, next(([job for job, _ in top[:count]] for cb, count, top in events["claw_back"]
+                               if timedelta() <= cb - ts <= window), []))
+            for ts, paused in events["escalation"]]
+
+
+def executor_record(events):
+    """What the design document asks to record per executor for every run: the pause count, the longest pause
+    episode with its retry number, the escalations with the queries they cancelled, and the transport failures."""
+    longest = max(events["read_pause"], key=lambda p: p[3], default=None)
+    return {"pauses": len(events["read_pause"]),
+            "longest episode": f"{longest[3]} ms at retry {longest[4]}" if longest else None,
+            "gave up": len(events["pause_gave_up"]),
+            "escalations": [(ts.strftime("%H:%M:%S"), f"paused {paused} ms", cancelled) for ts, paused, cancelled in escalations(events)],
+            "transport failures": len(events["transport_failure"])}
+
+
+def summarize(per_container):
+    """The lines of a run summary about the logs: the events of all containers, the failures by cause, the fabric OOMs
+    by the kind of allocation that failed, and the record of every executor."""
+    events = merge(per_container)
+    return (f"events: {({name: len(e) for name, e in events.items()})}, failures by cause: "
+            f"{dict(Counter(cause or 'not named' for *_, cause in events['job_failed']))}, "
+            f"fabric OOMs by allocation: {dict(Counter(kind for *_, kind in events['fabric_oom']))}\n"
+            + "\n".join(f"{container}: {executor_record(e)}" for container, e in per_container.items()))
