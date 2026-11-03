@@ -15,6 +15,16 @@ def storage_path(container, root=STORAGE_ROOT):
     return Path(root) / container
 
 
+STORAGES = ("fs", "s3")                             # where the tables of a test run live: files of STORAGE_PATH, or a bucket of an S3 server
+STORAGE = "fs"                                      # the default of STORAGES
+
+def storage_file(filename, storage=STORAGE):
+    """A file of the OOM search in DATA_DIR for a storage: the results of each storage are kept apart (they are not comparable),
+    oom_runs.csv for the default storage, oom_runs_s3.csv for s3."""
+    return DATA_DIR / (filename if storage == STORAGE else f"{Path(filename).stem}_{storage}{Path(filename).suffix}")
+
+
+TEST_S3 = "perf-s3"                                 # the container of the S3 server of the runs with STORAGE=s3 (credentials and port: OOM_REPRO_S3_*)
 BLOCKS_SUBDIR = "blocks"                            # generated data blocks inside a storage
 OOM_REPRO_DIR = STORAGE_ROOT / "fabric-oom-repro"   # data sets of the fabric OOM stand, mounted into every node at this path
 OOM_REPRO_SCALE = 0.0175                            # of the master repro data: 1/57, as 2 x 6 GB direct memory to 7 x 96 GB

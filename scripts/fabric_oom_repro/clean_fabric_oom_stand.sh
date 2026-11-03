@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Removes the stand of the fabric direct-memory OOM repro (DX-127946) from both hosts: every container, the storage of
+# Removes the stand of the fabric direct-memory OOM repro (DX-127946) from both hosts: every container (also the S3 servers
+# with their buckets: the distributed store and the one of STORAGE=s3 runs), the storage of
 # each, the port forwarding of the host and the distributed directories of the stands. Containers of earlier stands
 # are named after their Dremio version, so setup_fabric_oom_stand.sh never replaces them; this is what removes them.
 #   scripts/fabric_oom_repro/clean_fabric_oom_stand.sh           (or: make fabric-oom-clean)

@@ -1,3 +1,4 @@
 pytest
 requests
 duckdb==1.5.6
+boto3

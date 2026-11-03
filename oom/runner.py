@@ -108,7 +108,7 @@ class Runner:
             return ERROR
         env = {**os.environ, "BLOCKS_DIR": self.blocks_dir}
         started = time.time()
-        proc = subprocess.Popen(["make", "test-container", f"CONTAINER={self.name}", f"ROW_COUNT={rows_m}M"],
+        proc = subprocess.Popen(["make", "test-container", f"CONTAINER={self.name}", f"ROW_COUNT={rows_m}M", f"STORAGE={self.args.storage}"],
                                 cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         lines = []
         for line in proc.stdout:

@@ -79,12 +79,24 @@ class DremioClient:
 
     # ---- catalog
     def ensure_nas_source(self, name, path):
-        """
-        Creates the NAS source, or repoints it to `path` if it already exists; True when the source is new or was
-        pointing elsewhere (the metadata of its tables then describes other files), False when it already had `path`.
-        """
+        """NAS source over `path` (see _ensure_source)."""
         path.mkdir(parents=True, exist_ok=True)
-        config = {"path": str(path)}
+        return self._ensure_source(name, "NAS", {"path": str(path)}, ["path"])
+
+    def ensure_s3_source(self, name, endpoint, key, secret, root):
+        """S3 source over `root` ("/<bucket>/<folder>") of the S3-compatible server at host:port `endpoint` (see _ensure_source)."""
+        config = {"credentialType": "ACCESS_KEY", "accessKey": key, "accessSecret": secret, "secure": False,
+                  "compatibilityMode": True, "rootPath": root,
+                  "propertyList": [{"name": "fs.s3a.endpoint", "value": endpoint},
+                                   {"name": "fs.s3a.path.style.access", "value": "true"}]}
+        return self._ensure_source(name, "S3", config, ["rootPath", "propertyList"])
+
+    def _ensure_source(self, name, source_type, config, identity):
+        """
+        Creates the source, or repoints it to `config` if it already exists and differs from it in a key of `identity`;
+        True when the source is new or was pointing elsewhere (the metadata of its tables then describes other files),
+        False when it already had them.
+        """
         # Look the source up by listing the catalog: by-path fails for an unavailable source.
         root = self._get("/api/v3/catalog")
         root.raise_for_status()
@@ -92,16 +104,19 @@ class DremioClient:
         if found:
             source = self._get(f"/api/v3/catalog/{found['id']}")
             source.raise_for_status()
-            if source.json()["config"]["path"] == config["path"]:
+            assert source.json()["type"] == source_type, \
+                f"source {name} is a {source.json()['type']} source, not {source_type}: delete it in Dremio to switch STORAGE"
+            existing = source.json()["config"]
+            if all(existing[k] == config[k] for k in identity):
                 return False
             body = {"entityType": "source", "id": found["id"], "tag": found["tag"],
-                    "name": name, "type": "NAS", "config": config}
+                    "name": name, "type": source_type, "config": config}
             r = requests.put(f"{self.url}/api/v3/catalog/{found['id']}",
                              headers=self.headers, json=body, timeout=60)
         else:
             r = requests.post(f"{self.url}/api/v3/catalog", headers=self.headers, timeout=60,
-                              json={"entityType": "source", "name": name, "type": "NAS", "config": config})
-        assert r.ok, f"Cannot configure source {name} -> {path}: {r.status_code} {r.text}"
+                              json={"entityType": "source", "name": name, "type": source_type, "config": config})
+        assert r.ok, f"Cannot configure source {name}: {r.status_code} {r.text}"
         return True
 
     def entity_type(self, path):

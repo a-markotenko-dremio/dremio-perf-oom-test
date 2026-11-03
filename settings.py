@@ -11,6 +11,13 @@
                    required by the tests that use Dremio.
                    Two NAS sources are created in Dremio: <STORAGE_PATH>/input and
                    <STORAGE_PATH>/output. The directory must be writable by the Dremio user.
+  STORAGE          where the tables live: fs (default; files of STORAGE_PATH, NAS sources) or s3 (a bucket of an S3
+                   server, S3 sources; STORAGE_PATH then only holds the generated blocks, from which the input table is
+                   uploaded). scripts/test_container.sh starts the server (scripts/lib/s3.sh) and sets the next two.
+  S3_ENDPOINT      host:port of the S3 server; required by STORAGE=s3
+  S3_BUCKET        the bucket of both tables (input/ and output/ in it); required by STORAGE=s3
+  S3_KEY / S3_SECRET
+                   credentials of the S3 server (default defaults.OOM_REPRO_S3_KEY / _SECRET)
   PRE_SQL          optional ';'-separated statements run before the test body, e.g. to raise the parallelism:
                    "ALTER SYSTEM SET planner.width.max_per_node = 28; ALTER SYSTEM SET planner.width.max_per_query = 1000".
                    Use ALTER SYSTEM: every job is its own session, so ALTER SESSION would not reach the test body.
@@ -56,13 +63,20 @@ DATA_DIR = defaults.DATA_DIR
 REPORT_CSV = Path(os.environ.get("REPORT_CSV", DATA_DIR / "test_results.csv"))
 
 STORAGE_PATH = Path(os.environ["STORAGE_PATH"]) if "STORAGE_PATH" in os.environ else None  # see the storage_path fixture
+STORAGE = os.environ.get("STORAGE", defaults.STORAGE)
+if STORAGE not in defaults.STORAGES:
+    raise ValueError(f"STORAGE must be one of {', '.join(defaults.STORAGES)}, got {STORAGE!r}")
+S3_ENDPOINT = os.environ.get("S3_ENDPOINT")  # see the s3 fixture
+S3_BUCKET = os.environ.get("S3_BUCKET")
+S3_KEY = os.environ.get("S3_KEY", defaults.OOM_REPRO_S3_KEY)
+S3_SECRET = os.environ.get("S3_SECRET", defaults.OOM_REPRO_S3_SECRET)
 INPUT_SOURCE = "perf_input"
 OUTPUT_SOURCE = "perf_output"
 
 INPUT_TABLE_PATH = [INPUT_SOURCE, "STACKIT_S3", "tpcds-1tb-flat", "catalog_sales"]
 INPUT_TABLE = f'"{INPUT_SOURCE}".STACKIT_S3."tpcds-1tb-flat".catalog_sales'
 OUTPUT_TABLE = f'"{OUTPUT_SOURCE}"."tpcds-1tb".catalog_sales'
-OUTPUT_TABLE_SUBDIR = Path("output", "tpcds-1tb", "catalog_sales")  # of STORAGE_PATH
+OUTPUT_TABLE_SUBDIR = Path("output", "tpcds-1tb", "catalog_sales")  # of STORAGE_PATH, or of the bucket
 SQL_PARAMS = {"INPUT_SOURCE": INPUT_SOURCE, "OUTPUT_SOURCE": OUTPUT_SOURCE}
 
 

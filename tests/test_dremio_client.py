@@ -21,7 +21,7 @@ def catalog(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(dremio_client.requests, "get", lambda url, **kw: (
         response(data=[{"path": [SOURCE], "id": SOURCE_ID, "tag": "7"}]) if url.endswith("/api/v3/catalog")
-        else response(id=SOURCE_ID, config={"path": str(STAND)})))
+        else response(id=SOURCE_ID, type="NAS", config={"path": str(STAND)})))
     monkeypatch.setattr(dremio_client.requests, "put", lambda url, **kw: calls.append(("put", url, kw["json"])) or response())
     monkeypatch.setattr(dremio_client.requests, "post", lambda url, **kw: calls.append(("post", url, kw["json"])) or response())
     monkeypatch.setattr(Path, "mkdir", lambda *a, **kw: None)
@@ -68,3 +68,49 @@ def test_a_bool_option_is_written_as_an_sql_keyword():
     """ALTER SYSTEM SET "dremio.results_cache_rest_enabled" = False is a syntax error; false is not."""
     assert dremio_client.sql_value(False) == "false"
     assert dremio_client.sql_value(24) == 24 and dremio_client.sql_value(4.0) == 4.0
+
+
+S3_ARGS = ("perf_input", "10.97.177.20:9000", "dremio", "dremio123", "/d26-1-8-wolfi-jdk-21-8G-4cpu/input")
+S3_PROPERTIES = [{"name": "fs.s3a.endpoint", "value": "10.97.177.20:9000"}, {"name": "fs.s3a.path.style.access", "value": "true"}]
+
+
+@pytest.fixture
+def s3_catalog(monkeypatch):
+    """A client whose catalog holds the S3 source over S3_ARGS; records the PUT and POST calls."""
+    calls = []
+    existing = {"rootPath": S3_ARGS[4], "propertyList": S3_PROPERTIES}
+    monkeypatch.setattr(dremio_client.requests, "get", lambda url, **kw: (
+        response(data=[{"path": ["perf_input"], "id": SOURCE_ID, "tag": "7"}]) if url.endswith("/api/v3/catalog")
+        else response(id=SOURCE_ID, type="S3", config=existing)))
+    monkeypatch.setattr(dremio_client.requests, "put", lambda url, **kw: calls.append(("put", kw["json"])) or response())
+    monkeypatch.setattr(dremio_client.requests, "post", lambda url, **kw: calls.append(("post", kw["json"])) or response())
+    return dremio_client.DremioClient("http://10.97.177.9:9047", 60), calls, existing
+
+
+def test_an_s3_source_on_the_bucket_is_left_alone(s3_catalog):
+    client, calls, _ = s3_catalog
+    assert client.ensure_s3_source(*S3_ARGS) is False
+    assert calls == []
+
+
+def test_an_s3_source_on_another_bucket_is_repointed(s3_catalog):
+    client, calls, existing = s3_catalog
+    existing["rootPath"] = "/d26-1-10-wolfi-jdk-21-8G-4cpu/input"
+    assert client.ensure_s3_source(*S3_ARGS) is True
+    [(kind, body)] = calls
+    assert (kind, body["type"], body["config"]["rootPath"], body["config"]["propertyList"]) == ("put", "S3", S3_ARGS[4], S3_PROPERTIES)
+
+
+def test_a_missing_s3_source_is_created_with_the_endpoint_of_the_server(s3_catalog, monkeypatch):
+    client, calls, _ = s3_catalog
+    monkeypatch.setattr(dremio_client.requests, "get", lambda url, **kw: response(data=[]))
+    assert client.ensure_s3_source(*S3_ARGS) is True
+    [(kind, body)] = calls
+    assert (kind, body["type"], body["config"]["accessKey"], body["config"]["propertyList"]) == ("post", "S3", "dremio", S3_PROPERTIES)
+
+
+def test_a_nas_source_is_not_turned_into_an_s3_source(catalog):
+    client, calls = catalog
+    with pytest.raises(AssertionError, match="is a NAS source, not S3"):
+        client.ensure_s3_source(SOURCE, *S3_ARGS[1:])
+    assert calls == []

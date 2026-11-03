@@ -37,7 +37,7 @@ row for it, the next step goes on from the last successful one. After --max-skip
 the script stops: the environment is probably broken.
 
 Files (resumable: what is recorded is not run again; --retry-errors runs ERROR runs again):
-  data/oom_runs.csv    every run of the search with its outcome (PASS | FAIL | ERROR): the only recorded data
+  data/oom_runs.csv    (with --storage s3 oom_runs_s3.csv, likewise oom_ranges_s3.csv: the storages are not comparable) every run of the search with its outcome (PASS | FAIL | ERROR): the only recorded data
   data/oom_ranges.csv  the finished steps, for the chart (report.lines): Dremio ver, Java image, Heap MB, Pass max
                        rows, Fail min rows, Mean rows, Status (RANGE | ROUGH, a bracket wider than the precision | ALL_PASS | ALL_FAIL). Written again from
                        oom_runs.csv at the start and after every run, never read: edit oom_runs.csv, not this file
@@ -47,6 +47,9 @@ half-written output table of tens of GB) is deleted together with its container 
 when a run is done. The shared data blocks (<storage-root>/blocks) are never touched. At the start the script also
 deletes the storages of containers that do not exist any more (left by runs that were killed; with --plan it only lists
 them). Run only one instance per storage root: the storage of a run that is just starting has no container yet.
+With --storage s3 the tables of a combination live in a bucket (named like its container) of the S3 server of
+scripts/lib/s3.sh instead of its storage; the buckets are reused by the next runs of the combination and are not
+deleted (delete the container of the server, TEST_S3 of defaults.py, to free the space).
 Run with PLAN=1 or --plan to see the combinations, the heap sizes and what is already recorded.
 """
 import argparse
@@ -87,11 +90,17 @@ def parse_args(argv=None):
     ap.add_argument("--window", type=int, default=10, metavar="M", help="the first step of the search away from the guess, millions of rows (default 10); it doubles while the frontier is not bracketed")
     ap.add_argument("--max-skipped", type=int, default=3, help="stop after this many skipped heap steps in a row")
     ap.add_argument("--retry-errors", action="store_true", help="run again the runs recorded as ERROR")
+    ap.add_argument("--storage", choices=defaults.STORAGES, default=defaults.STORAGE,
+                    help="where the tables of a test live: files under --storage-root, or a bucket of the S3 server of "
+                         "scripts/lib/s3.sh (default %(default)s). The generated blocks stay under --storage-root. "
+                         "The results of each storage are kept apart: see --runs-csv")
     ap.add_argument("--storage-root", default=str(defaults.STORAGE_ROOT), help="a combination stores its data in <root>/<container name>")
-    ap.add_argument("--ranges-csv", default=str(defaults.DATA_DIR / "oom_ranges.csv"), help="output for the chart, written from the runs")
-    ap.add_argument("--runs-csv", default=str(defaults.DATA_DIR / "oom_runs.csv"))
+    ap.add_argument("--ranges-csv", help="output for the chart, written from the runs (default data/oom_ranges.csv, data/oom_ranges_s3.csv for --storage s3)")
+    ap.add_argument("--runs-csv", help="the recorded runs (default data/oom_runs.csv, data/oom_runs_s3.csv for --storage s3)")
     ap.add_argument("--plan", action="store_true", help="only print what would run")
     args = ap.parse_args(argv)
+    args.ranges_csv = args.ranges_csv or str(defaults.storage_file("oom_ranges.csv", args.storage))
+    args.runs_csv = args.runs_csv or str(defaults.storage_file("oom_runs.csv", args.storage))
     if os.environ.get("PLAN"):
         args.plan = True
     if args.packages is None:
