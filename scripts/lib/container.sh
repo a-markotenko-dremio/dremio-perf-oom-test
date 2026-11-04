@@ -38,6 +38,7 @@ create_container() {
         $CT delete --force "$NAME"
     fi
 
+    remove_orphan_volume "$NAME"
     log "Creating container $NAME from $IMAGE (memory ${CONTAINER_MB}MiB)"
     launch_args=(-c "limits.memory=${CONTAINER_MB}MiB")
     [[ -n $CPUS ]] && launch_args+=(-c "limits.cpu=$CPUS")

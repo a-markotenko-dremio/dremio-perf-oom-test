@@ -21,6 +21,9 @@ case "${1:-}" in
     *) echo "usage: $0 [--local PEER_HOST]" >&2; exit 2 ;;
 esac
 detect_container_cli
+# deleting an instance while the volume under the pool is not mounted leaves its directory in the pool, and the next
+# stand then cannot create a container of that name
+pool_is_available || die "storage pool $(pool_name) is not available: mount its volume first (sudo ubuntu-var mount)"
 
 mapfile -t names < <($CT list -c n --format csv)
 (( ${#names[@]} == 0 )) || $CT delete --force "${names[@]}"

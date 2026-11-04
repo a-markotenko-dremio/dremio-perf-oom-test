@@ -18,6 +18,25 @@ detect_container_cli() {
 # directories named like default_container_name (d<version>-<java>-<memory>-<cpus>cpu).
 container_storages() { compgen -G "$(default STORAGE_ROOT)/d*-*cpu" || true; }
 
+# The storage pool of the default profile, its directory, and its state (CREATED, or UNAVAILABLE when the volume
+# that holds it is not mounted). usage: after detect_container_cli
+pool_name() { $CT profile device get default root pool; }
+pool_dir() { $CT storage get "$(pool_name)" source; }
+pool_is_available() { [[ $($CT storage list --format csv -c ns | awk -F, -v p="$(pool_name)" '$1 == p {print $2}') == CREATED ]]; }
+
+# remove_orphan_volume NAME: drops the directory of a container that the pool still holds although no such instance
+# exists. One is left behind whenever an instance is deleted while the volume under the pool is not mounted: the
+# record goes, the directory comes back with the volume, and the next create fails with "Volume path ... already
+# exists". usage: before creating the container NAME
+remove_orphan_volume() {
+    local path
+    $CT info "$1" >/dev/null 2>&1 && return 0
+    path=$(pool_dir)/containers/$1
+    [[ -d $path ]] || return 0
+    log "Removing the orphan volume of $1 left in the storage pool"
+    sudo rm -rf "$path"
+}
+
 # Runs a command in the container NAME.
 cx() { $CT exec "$NAME" -- "$@"; }
 

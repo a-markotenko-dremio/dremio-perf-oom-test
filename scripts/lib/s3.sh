@@ -9,6 +9,7 @@ launch_s3_server() {
     local port
     port=$(default OOM_REPRO_S3_PORT)
     $CT delete --force "$NAME" 2>/dev/null || true
+    remove_orphan_volume "$NAME"
     # capped: on the stand it shares the host with the coordinator, whose container limit is already above the memory
     # free there, and a host OOM kill of that node would look like the node loss the tests hunt for
     $CT launch "$DEFAULT_IMAGE" "$NAME" -c limits.cpu=1 -c limits.memory=1GiB >/dev/null
