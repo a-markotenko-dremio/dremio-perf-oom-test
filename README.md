@@ -93,6 +93,7 @@ not stop the next; the exit status is the last failure. `RUNS` (default 3) is th
 ```
 make fabric-oom TARBALL=/mnt/ubuntu-var/nfs/shared/Downloads/dremio-enterprise-25.2.0-202410241428100111-a963b970.tar.gz
 OOM_JAVA_OPTS=-Ddremio.rpc.pause_reads_on_direct_oom=true make fabric-oom-stand TARBALL=...
+OOM_MEMORY_PCT=50 make fabric-oom-stand TARBALL=...
 OOM_ESCALATION=1 make fabric-oom-func RUNS=3
 make fabric-oom-feature RUNS=1
 make fabric-oom-repro OOM_DATA=/mnt/.../other
@@ -102,6 +103,7 @@ make fabric-oom-clean
 
 - `fabric-oom`: the stand and the repro.
 - `OOM_JAVA_OPTS=...` on the stand: a build with the fix, read pause on.
+- `OOM_MEMORY_PCT=50` on the stand: both nodes with half the heap, direct memory and container RAM.
 - `fabric-oom-func`: the fix verification on the stand that is up; `OOM_ESCALATION=1` escalation on, `0` the read pause alone.
 - `fabric-oom-feature`: the same workload with no time limit: does the fix serve every query.
 - `fabric-oom-repro OOM_DATA=...`: the repro on another data set; on a fixed build with both changes off the bug must still reproduce.

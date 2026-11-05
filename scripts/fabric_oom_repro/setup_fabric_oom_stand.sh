@@ -6,7 +6,8 @@
 # the tests find them by the data device, not by name. The executor host runs its part from its own clone of this
 # repository (git pull first, so push before running). OOM_JAVA_OPTS are extra JVM options for both nodes, e.g. the
 # read pause of DX-128233 (-Ddremio.rpc.pause_reads_on_direct_oom=true) or its give-up (...max_millis=1000), set at
-# deployment because a JVM flag needs a restart.
+# deployment because a JVM flag needs a restart. OOM_MEMORY_PCT scales the heap, the direct memory and the RAM of both
+# nodes (50: half of each; the containers are then named after the smaller RAM).
 set -euxo pipefail
 REPO=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)
 source "$REPO/scripts/lib/common.sh"
@@ -16,8 +17,9 @@ cd "$REPO"
 [[ $# -eq 1 && -f $1 ]] || { echo "usage: $0 TARBALL (a dremio-*.tar.gz)" >&2; exit 2; }
 TARBALL=$(readlink -f "$1")
 JAVA=21
-COORDINATOR_CPUS=4 COORDINATOR_HEAP_MB=4096 COORDINATOR_DIRECT_MB=6144 COORDINATOR_MB=14336
-EXECUTOR_CPUS=16 EXECUTOR_HEAP_MB=2048 EXECUTOR_DIRECT_MB=6144 EXECUTOR_MB=10240
+# the sizes of the stand of DX-127946 (heap, direct memory, RAM of the container), scaled by OOM_MEMORY_PCT
+COORDINATOR_CPUS=4 COORDINATOR_HEAP_MB=$(scaled_mb 4096) COORDINATOR_DIRECT_MB=$(scaled_mb 6144) COORDINATOR_MB=$(scaled_mb 14336)
+EXECUTOR_CPUS=16 EXECUTOR_HEAP_MB=$(scaled_mb 2048) EXECUTOR_DIRECT_MB=$(scaled_mb 6144) EXECUTOR_MB=$(scaled_mb 10240)
 COORDINATOR=$(default_container_name "$TARBALL" $JAVA $COORDINATOR_MB $COORDINATOR_CPUS)
 EXECUTOR=$(default_container_name "$TARBALL" $JAVA $EXECUTOR_MB $EXECUTOR_CPUS)
 EXECUTOR_HOST=$(default OOM_REPRO_EXECUTOR_HOST)

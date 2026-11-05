@@ -137,3 +137,9 @@ def test_a_device_mounting_another_directory_is_replaced(stand_hosts, tmp_path):
     assert out.returncode == 0, out.stderr
     assert calls() == ["remove d27-0-0-j21-14G-4cpu fabric-oom-repro",
                        f"add d27-0-0-j21-14G-4cpu fabric-oom-repro disk source={new} path={new} shift=true"]
+
+
+def test_the_memory_of_a_node_is_scaled_by_oom_memory_pct():
+    """The stand with half the memory: OOM_MEMORY_PCT=50 halves every size, unset leaves them as they are."""
+    assert cluster_sh("scaled_mb 14336; scaled_mb 6144", {"OOM_MEMORY_PCT": "50"}).stdout == "7168\n3072\n"
+    assert cluster_sh("scaled_mb 14336").stdout == "14336\n"

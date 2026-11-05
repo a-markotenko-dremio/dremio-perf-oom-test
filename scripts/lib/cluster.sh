@@ -79,6 +79,10 @@ mount_stand_dir() {
 }
 
 # stand_node [HOST]: the running container of the stand on HOST (this host when omitted): the one with the data device.
+# A memory size (MB) of a stand node scaled by OOM_MEMORY_PCT (default 100): the heap, the direct memory and the RAM of
+# the container all at once, so OOM_MEMORY_PCT=50 is the stand with half the memory.
+scaled_mb() { echo $(( $1 * ${OOM_MEMORY_PCT:-100} / 100 )); }
+
 stand_node() {
     local script found
     # the script ends with true: the status of the last `device get` must not fail the caller's set -e
