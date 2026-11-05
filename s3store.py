@@ -39,3 +39,24 @@ def upload_folder(s3, bucket, folder, prefix, log=print):
         if remote.get(key) != f.stat().st_size:
             s3.upload_file(str(f), bucket, key)
             log(f"uploaded s3://{bucket}/{key}")
+
+
+class Store:
+    """The S3 bucket as a remote store of the test run (the interface of conftest.remote_store, shared with hdfsstore.Store)."""
+
+    def __init__(self, endpoint, bucket, key, secret):
+        self.endpoint, self.bucket, self.key, self.secret = endpoint, bucket, key, secret
+        self.client = client(endpoint, key, secret)
+        self.url = f"s3://{endpoint}/{bucket}"
+
+    def ensure_sources(self, dremio, sources):
+        """Creates the Dremio sources, {name: subdirectory of the store}; the bucket first."""
+        ensure_bucket(self.client, self.bucket)
+        for name, subdir in sources.items():
+            dremio.ensure_s3_source(name, self.endpoint, self.key, self.secret, f"/{self.bucket}/{subdir}")
+
+    def delete_folder(self, prefix):
+        delete_folder(self.client, self.bucket, prefix)
+
+    def upload_folder(self, folder, prefix, log=print):
+        upload_folder(self.client, self.bucket, folder, prefix, log)

@@ -6,6 +6,7 @@ import requests
 
 import settings
 import generate_data
+import hdfsstore
 import s3store
 from dremio_client import DremioClient
 
@@ -48,42 +49,48 @@ def storage_path():
     return settings.STORAGE_PATH
 
 
-@pytest.fixture(scope="session")
-def s3():
-    """The client of the S3 server with STORAGE=s3, None with STORAGE=fs."""
-    if settings.STORAGE == "fs":
-        return None
-    for name in ("S3_ENDPOINT", "S3_BUCKET"):
+def require(*names):
+    for name in names:
         if getattr(settings, name) is None:
-            pytest.fail(f"{name} is not set, STORAGE=s3 needs it (make test-container sets it, and starts the server)")
-    return s3store.client(settings.S3_ENDPOINT, settings.S3_KEY, settings.S3_SECRET)
+            pytest.fail(f"{name} is not set, STORAGE={settings.STORAGE} needs it")
 
 
 @pytest.fixture(scope="session")
-def storage(dremio, storage_path, s3):
-    """Creates the Dremio sources that keep both tables: NAS sources on STORAGE_PATH, or S3 sources on the bucket."""
+def remote_store():
+    """The store that keeps both tables with STORAGE=s3 (a bucket) or hdfs (a directory), None with STORAGE=fs."""
+    if settings.STORAGE == "s3":
+        require("S3_ENDPOINT", "S3_BUCKET")  # make test-container sets them, and starts the server
+        return s3store.Store(settings.S3_ENDPOINT, settings.S3_BUCKET, settings.S3_KEY, settings.S3_SECRET)
+    if settings.STORAGE == "hdfs":
+        require("HDFS_HOST")
+        return hdfsstore.Store(settings.HDFS_HOST, settings.HDFS_PORT, settings.HDFS_WEB_PORT, settings.HDFS_ROOT,
+                               settings.HDFS_USER)
+
+
+@pytest.fixture(scope="session")
+def storage(dremio, storage_path, remote_store):
+    """Creates the Dremio sources that keep both tables: NAS sources on STORAGE_PATH, or the sources of the remote store."""
     path = storage_path
     if not os.access(path.parent if not path.exists() else path, os.W_OK):
         pytest.fail(f"STORAGE_PATH {path} is not writable by user "
                     f"{os.environ.get('USER', '?')}; create it and grant write access")
-    if s3:
-        s3store.ensure_bucket(s3, settings.S3_BUCKET)
-    for source, subdir in ((settings.INPUT_SOURCE, "input"), (settings.OUTPUT_SOURCE, "output")):
-        if s3:
-            dremio.ensure_s3_source(source, settings.S3_ENDPOINT, settings.S3_KEY, settings.S3_SECRET,
-                                    f"/{settings.S3_BUCKET}/{subdir}")
-        else:
+    sources = {settings.INPUT_SOURCE: "input", settings.OUTPUT_SOURCE: "output"}
+    if remote_store:
+        remote_store.ensure_sources(dremio, sources)
+    else:
+        for source, subdir in sources.items():
+            (path / subdir).mkdir(parents=True, exist_ok=True)
             dremio.ensure_nas_source(source, path / subdir)
 
 
 @pytest.fixture(scope="session")
-def prepared_data(dremio, storage, storage_path, s3):
+def prepared_data(dremio, storage, storage_path, remote_store):
     """The generated input table, registered in Dremio."""
     assert 0 < settings.ROW_COUNT <= settings.MAX_ROW_COUNT, \
         f"ROW_COUNT must be in 1..{settings.MAX_ROW_COUNT}, got {settings.ROW_COUNT}"
     dremio.unpromote_table(settings.INPUT_TABLE_PATH)
     log = lambda m: print(m, flush=True)
     table_dir = generate_data.generate(settings.ROW_COUNT, storage_path, log=log)
-    if s3:
-        s3store.upload_folder(s3, settings.S3_BUCKET, table_dir, generate_data.TABLE_SUBDIR.as_posix(), log=log)
+    if remote_store:
+        remote_store.upload_folder(table_dir, generate_data.TABLE_SUBDIR.as_posix(), log=log)
     dremio.promote_folder(settings.INPUT_TABLE_PATH)

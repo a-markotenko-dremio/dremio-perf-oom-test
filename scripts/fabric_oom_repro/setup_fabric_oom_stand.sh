@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Brings up the two-host stand of the fabric direct-memory OOM repro (DX-127946) from a Dremio tarball: coordinator +
-# executor on this host, the second executor on the executor host of defaults.py, and the data set of the stand.
+# executor on this host and the second executor on the executor host of defaults.py. The data set is made by the
+# oom_data fixture of the tests (generated when missing, copied to the executor host).
 #   scripts/fabric_oom_repro/setup_fabric_oom_stand.sh TARBALL      (or: make fabric-oom-stand TARBALL=...)
 # Run on the coordinator host. The containers are named after the tarball (default_container_name of common.sh), so
 # the tests find them by the data device, not by name. The executor host runs its part from its own clone of this
@@ -24,7 +25,6 @@ COORDINATOR=$(default_container_name "$TARBALL" $JAVA $COORDINATOR_MB $COORDINAT
 EXECUTOR=$(default_container_name "$TARBALL" $JAVA $EXECUTOR_MB $EXECUTOR_CPUS)
 EXECUTOR_HOST=$(default OOM_REPRO_EXECUTOR_HOST)
 EXECUTOR_REPO=$(default OOM_REPRO_EXECUTOR_REPO)
-DATA=$(default OOM_REPRO_DATA)
 
 # stop everything on both hosts, then create the containers on both at once: the deployments are independent and
 # each copies the 1 GB tarball into its container, which is the longest step of the stand.
@@ -68,8 +68,4 @@ registered() { cx grep -q "nodesRegistered $(host_address "$EXECUTOR_HOST")" /op
 for _ in $(seq 60); do registered && break; sleep 5; done
 registered
 echo "UI $DREMIO_URL"
-
-# the data set on both hosts
-[[ -d $DATA/TestCaseData ]] || .venv/bin/python -m fabric_oom_repro.generate_oom_data "$DATA" --scale "$(default OOM_REPRO_SCALE)"
-ssh -n "$EXECUTOR_HOST" "mkdir -p $DATA" && rsync -a "$DATA/" "$EXECUTOR_HOST:$DATA/"
-echo "stand up: $COORDINATOR on $(hostname), $EXECUTOR on $EXECUTOR_HOST, data set $DATA, dist store $S3_REMOTE"
+echo "stand up: $COORDINATOR on $(hostname), $EXECUTOR on $EXECUTOR_HOST, dist store $S3_REMOTE"

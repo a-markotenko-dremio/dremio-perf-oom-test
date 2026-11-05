@@ -15,7 +15,7 @@ from pathlib import Path
 NAME = re.compile(r"fabric-oom-(?P<case>\w+)-(?P<when>\d{8}-\d{6})\.log$")
 VERDICT = re.compile(r"^=+ (?P<counts>\d+ (?:passed|failed).*?) in (?P<seconds>[\d.]+)s", re.M)
 COMMIT = re.compile(r"^commit=(?P<commit>\S+)$", re.M)
-BUILD = re.compile(r"^build=(?P<packages>\{.*\})$", re.M)  # container -> "tarball sha256"
+BUILD = re.compile(r"^build=(?P<packages>\{.*\})$", re.M)  # container -> "tarball sha256", or the package URL of a node that is no container
 SYSTEM_OPTIONS = re.compile(r"^system options=(?P<options>\{.*\})$", re.M)
 RESERVE_OPTION = "exec.spillable.operators.pct_free_memory_watermark"
 INNOCENT_QUERY = re.compile(r"^innocent query: (?P<state>.*)$", re.M)
@@ -60,7 +60,7 @@ def row(name, number, text):
     if commit := COMMIT.search(text):
         r["commit"] = commit["commit"]
     if build := BUILD.search(text):
-        r["build"] = "; ".join(sorted({f"{name} {sha[:12]}" for name, sha in map(str.split, ast.literal_eval(build["packages"]).values())}))
+        r["build"] = "; ".join(sorted({" ".join([name, *(sha[:12] for sha in shas)]) for name, *shas in map(str.split, ast.literal_eval(build["packages"]).values())}))
     if options := SYSTEM_OPTIONS.search(text):
         r["reserve %"] = ast.literal_eval(options["options"]).get(RESERVE_OPTION, "default")  # not set: Dremio's own (20)
     if small := INNOCENT_QUERY.search(text):

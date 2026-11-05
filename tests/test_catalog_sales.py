@@ -12,22 +12,21 @@ Settings come from environment variables, see settings.py.
 import shutil
 import time
 
-import s3store
 import settings
 import results_report
 import run_report
 
 
-def clean_output_table(dremio, storage_path, s3):
+def clean_output_table(dremio, storage_path, remote_store):
     """Removes the output table of a previous run, also when this Dremio does not know it.
 
-    STORAGE_PATH (and the bucket with STORAGE=s3) outlives the container, so a fresh Dremio has no metadata for the
+    STORAGE_PATH (and the bucket or directory of STORAGE=s3|hdfs) outlives the container, so a fresh Dremio has no metadata for the
     table left in it; DROP TABLE IF EXISTS is then a no-op and CREATE TABLE fails with "Folder already exists".
     """
     dremio.run_sql(f"DROP TABLE IF EXISTS {settings.OUTPUT_TABLE}")
-    if s3:
-        print(f"removing leftover output table s3://{settings.S3_BUCKET}/{settings.OUTPUT_TABLE_SUBDIR}", flush=True)
-        s3store.delete_folder(s3, settings.S3_BUCKET, settings.OUTPUT_TABLE_SUBDIR.as_posix())
+    if remote_store:
+        print(f"removing leftover output table {remote_store.url}/{settings.OUTPUT_TABLE_SUBDIR}", flush=True)
+        remote_store.delete_folder(settings.OUTPUT_TABLE_SUBDIR.as_posix())
         return
     table_dir = storage_path / settings.OUTPUT_TABLE_SUBDIR
     if table_dir.exists():
@@ -35,13 +34,13 @@ def clean_output_table(dremio, storage_path, s3):
         shutil.rmtree(table_dir)
 
 
-def test_output_row_count_matches_input(prepared_data, dremio, storage_path, s3):
+def test_output_row_count_matches_input(prepared_data, dremio, storage_path, remote_store):
     input_count = dremio.count_rows(settings.INPUT_TABLE)
     assert input_count == settings.ROW_COUNT, \
         f"Input table has {input_count} rows, expected {settings.ROW_COUNT} " \
         f"({results_report.format_rows(settings.ROW_COUNT)})"
 
-    clean_output_table(dremio, storage_path, s3)
+    clean_output_table(dremio, storage_path, remote_store)
     verdict = "FAIL"
     started_at = time.time()
     started = time.monotonic()

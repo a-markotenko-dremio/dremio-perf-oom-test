@@ -12,6 +12,8 @@ The rows per build are fixed: SUITES suites per build and TESTS tests per suite,
 builds. The GROUP BY BuildUniqueId, TestName of the queries then has about one group per TestCaseData row.
 
 Usage: python -m fabric_oom_repro.generate_oom_data OUTPUT_DIR --scale 0.0175
+
+A directory that already has the tables is kept. The file needs nothing but duckdb: dataset.py runs it alone on the hosts of the nodes.
 """
 import argparse
 import os
@@ -77,12 +79,23 @@ def generate(output_dir, scale, log=print):
     return counts
 
 
+def ensure(output_dir, scale, log=print):
+    """Makes output_dir hold the data set: nothing to do when it has both tables, generated when the directory is
+    missing or empty; any other directory is an error (it is not a data set of this generator, and is not overwritten)."""
+    if all(os.path.isdir(os.path.join(output_dir, table)) for table in TABLES):
+        return
+    if os.path.exists(output_dir) and os.listdir(output_dir):
+        sys.exit(f"{output_dir} is not a data set of generate_oom_data (it has no {' and '.join(TABLES)}) and is not empty")
+    log(f"generating the data set {output_dir} at scale {scale}")
+    generate(output_dir, scale, log=log)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("output_dir")
     parser.add_argument("--scale", type=float, required=True, help="fraction of the 9.4 B rows, e.g. 0.0175")
     args = parser.parse_args()
-    generate(args.output_dir, args.scale)
+    ensure(args.output_dir, args.scale)
 
 
 if __name__ == "__main__":

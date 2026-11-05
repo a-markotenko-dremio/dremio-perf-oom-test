@@ -24,7 +24,6 @@ def catalog(monkeypatch, tmp_path):
         else response(id=SOURCE_ID, type="NAS", config={"path": str(STAND)})))
     monkeypatch.setattr(dremio_client.requests, "put", lambda url, **kw: calls.append(("put", url, kw["json"])) or response())
     monkeypatch.setattr(dremio_client.requests, "post", lambda url, **kw: calls.append(("post", url, kw["json"])) or response())
-    monkeypatch.setattr(Path, "mkdir", lambda *a, **kw: None)
     return dremio_client.DremioClient("http://192.168.1.75:9047", 60), calls
 
 

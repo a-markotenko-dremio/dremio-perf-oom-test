@@ -68,3 +68,48 @@ def test_only_the_events_the_action_added_are_returned(container_logs):
     result, per_container = repro.events_added_by(["any"], action)
     assert result == "done"
     assert {name: len(e) for name, e in per_container["any"].items() if e} == {"shrink": 1}
+
+
+@pytest.fixture
+def ssh_logs(tmp_path, monkeypatch):
+    """`ssh HOST CMD` and `sudo -n CMD...` run here; the log directories of a host point into tmp_path."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, script in (("ssh", 'shift 3\nexec bash -c "$1"'), ("sudo", "shift\nexec \"$@\"")):
+        tool = bin_dir / name
+        tool.write_text(f"#!/bin/bash\n{script}\n")
+        tool.chmod(tool.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setattr(repro, "DREMIO_LOGS", repro.DREMIO_LOGS.replace("/var/log/dremio", str(tmp_path / "dremio")))
+    monkeypatch.setattr(repro, "YARN_LOGS", str(tmp_path / "yarn"))
+    return tmp_path
+
+
+def test_the_coordinator_log_of_a_host_is_read_over_ssh(ssh_logs):
+    (ssh_logs / "dremio" / "archive").mkdir(parents=True)
+    (ssh_logs / "dremio" / "server.log").write_text(FABRIC_OOM[0] + "\n")
+    with gzip.open(ssh_logs / "dremio" / "archive" / "server.2026-10-22.1.log.gz", "wt") as f:
+        f.write(FABRIC_OOM[2] + "\n")
+    assert repro.log_lines("dremio://host", fabric_oom.PATTERN) == [FABRIC_OOM[2], FABRIC_OOM[0]]
+
+
+def test_only_the_stdout_of_the_container_that_runs_dremio_is_read(ssh_logs):
+    """The application master of the same YARN application has a stdout too; its lines are not the node's."""
+    for container, lines in (("container_01", ["Invoking com.dremio.dac.daemon.YarnDaemon.run([])", *FABRIC_OOM[:2]]),
+                             ("container_02", FABRIC_OOM[2:]), ("container_03", ["INFO nothing"])):
+        directory = ssh_logs / "yarn" / "application_1" / container
+        directory.mkdir(parents=True)
+        (directory / "stdout").write_text("\n".join(lines) + "\n")
+    assert repro.log_lines("yarn://host", fabric_oom.PATTERN) == FABRIC_OOM[:2]
+
+
+def test_an_executor_without_events_has_no_lines(ssh_logs):
+    directory = ssh_logs / "yarn" / "application_1" / "container_01"
+    directory.mkdir(parents=True)
+    (directory / "stdout").write_text("Invoking com.dremio.dac.daemon.YarnDaemon.run([])\n")
+    assert repro.log_lines("yarn://host", fabric_oom.PATTERN) == []
+
+
+def test_an_unreadable_yarn_log_directory_is_an_error_not_a_zero(ssh_logs):
+    with pytest.raises(AssertionError, match="reading the log of yarn://host failed"):
+        repro.log_lines("yarn://host", fabric_oom.PATTERN)

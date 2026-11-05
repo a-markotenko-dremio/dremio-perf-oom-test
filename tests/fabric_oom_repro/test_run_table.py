@@ -96,3 +96,10 @@ def test_a_killed_second_session_is_a_row_without_a_result(tmp_path):
     (tmp_path / "fabric-oom-func-20261103-010912.log").write_text(SESSIONS[0] + HEADER + "collected 2 items\n")
     found = run_table.rows(tmp_path / "fabric-oom-func-20261103-010912.log")
     assert [(r["session"], r["verdict"]) for r in found] == [(1, "1 failed"), (2, "no result (running or killed)")]
+
+
+def test_a_node_that_is_no_container_is_named_by_its_package_url(tmp_path):
+    url = "gs://jenkins-builds.drem.io/dremio-pull-requests/PR-31026/3/dremio-enterprise-27.0.0-SNAPSHOT.tar.gz"
+    (tmp_path / "fabric-oom-repro-20261105-000000.log").write_text(
+        f"build={{'dremio://a-markotenko-0.c.dremio-1093.internal': '{url}', 'yarn://a-markotenko-1.c.dremio-1093.internal': '{url}'}}\n")
+    assert run_table.rows(tmp_path / "fabric-oom-repro-20261105-000000.log")[0]["build"] == url

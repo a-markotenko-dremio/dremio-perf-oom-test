@@ -80,7 +80,6 @@ class DremioClient:
     # ---- catalog
     def ensure_nas_source(self, name, path):
         """NAS source over `path` (see _ensure_source)."""
-        path.mkdir(parents=True, exist_ok=True)
         return self._ensure_source(name, "NAS", {"path": str(path)}, ["path"])
 
     def ensure_s3_source(self, name, endpoint, key, secret, root):
@@ -90,6 +89,11 @@ class DremioClient:
                   "propertyList": [{"name": "fs.s3a.endpoint", "value": endpoint},
                                    {"name": "fs.s3a.path.style.access", "value": "true"}]}
         return self._ensure_source(name, "S3", config, ["rootPath", "propertyList"])
+
+    def ensure_hdfs_source(self, name, host, port, root):
+        """HDFS source over `root` of the namenode host:port (see _ensure_source)."""
+        config = {"hostname": host, "port": str(port), "enableImpersonation": False, "rootPath": root}
+        return self._ensure_source(name, "HDFS", config, ["hostname", "port", "rootPath"])
 
     def _ensure_source(self, name, source_type, config, identity):
         """

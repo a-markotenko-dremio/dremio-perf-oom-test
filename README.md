@@ -6,19 +6,29 @@ Settings of the tests are environment variables, described in `settings.py`; sha
 Offline tests (no Dremio needed): `make test` runs the whole suite, which skips the tests that need Dremio when it is
 not reachable; or `.venv/bin/python -m pytest tests`.
 
-## Storage: files or S3
+## Storage: files, S3 or HDFS
 
-The tables of a test run (`input/` and `output/`) live either in files or in a bucket of an S3 server:
+The tables of a test run (`input/` and `output/`) live in files, in a bucket of an S3 server or in a directory of an HDFS:
 
 | `STORAGE` | where the tables are | Dremio sources |
 |-----------|----------------------|----------------|
 | `fs` (default) | files under `STORAGE_PATH` | NAS |
 | `s3` | a bucket of an S3 server, named like the container | S3 |
+| `hdfs` | the directory `HDFS_ROOT` of an existing HDFS | HDFS |
 
-With `s3`, `STORAGE_PATH` only holds the generated data blocks, from which the input table is uploaded into the bucket.
+With `s3` and `hdfs`, `STORAGE_PATH` only holds the generated data blocks, from which the input table is uploaded into the bucket or the directory.
 The S3 server is the S3 gateway of SeaweedFS in a container of its own (`TEST_S3` of `defaults.py`, code in
 `scripts/lib/s3.sh`). `make test-container` starts it when it is not running (the first start takes minutes). Its data
 outlives the runs and is not deleted by them; `make fabric-oom-clean` deletes it together with every other container.
+
+`hdfs` is for a Dremio cluster that already runs (nothing is deployed): run pytest directly, from any host that reaches
+the coordinator and the namenode (the data goes by WebHDFS, Dremio reads it by RPC). `make test-container` and `make oom` do not serve it.
+For the cluster `a-markotenko-0..2` (the coordinator is `a-markotenko-0`, which is also the namenode):
+
+```
+DREMIO_URL=http://172.25.1.201:9047 STORAGE=hdfs HDFS_HOST=a-markotenko-0.c.dremio-1093.internal \
+    STORAGE_PATH=/tmp/perf-blocks .venv/bin/python -m pytest -v -rs tests
+```
 
 `make test STORAGE=s3` works too, but then `S3_ENDPOINT` (host:port) and `S3_BUCKET` must be set, see `settings.py`.
 
@@ -102,6 +112,9 @@ make fabric-oom-clean
 ```
 
 - `fabric-oom`: the stand and the repro.
+- The data set (`OOM_DATA`) is made by the tests: the `oom_data` fixture generates it (scale `OOM_SCALE`) at the same path on every host of `OOM_CONTAINERS` where the directory does not exist, nothing is copied between hosts. A remote host gets a venv with the `duckdb` of `requirements.txt` in `~/.cache/fabric-oom` (the first run installs it with `uv`, which fetches Python 3.12).
+- Nodes that are not incus containers (an existing cluster): `OOM_CONTAINERS=dremio://HOST,yarn://HOST,...` (`dremio://` the coordinator, `yarn://` an executor that YARN runs); their logs are read over ssh, their build is the `dremio_pkg_url` of the VM metadata.
+  Run pytest directly, with `DREMIO_URL` and an `OOM_DATA` on a disk with room for the data set (about 12.6 GB at the default scale) on every node. On `a-markotenko-0..2`: `OOM_DATA=/data/fabric-oom-repro/scale-0.0175` (the directory `/data/fabric-oom-repro` is made once on each VM: `sudo install -d -o dremio -g dremio /data/fabric-oom-repro`).
 - `OOM_JAVA_OPTS=...` on the stand: a build with the fix, read pause on.
 - `OOM_MEMORY_PCT=50` on the stand: both nodes with half the heap, direct memory and container RAM.
 - `fabric-oom-func`: the fix verification on the stand that is up; `OOM_ESCALATION=1` escalation on, `0` the read pause alone.

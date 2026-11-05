@@ -4,7 +4,7 @@ import pytest
 
 import settings
 from dremio_client import sql_value
-from fabric_oom_repro.generate_oom_data import TABLES
+from fabric_oom_repro import dataset
 from fabric_oom_repro.stand import stand_of
 from fabric_oom_repro.tables import register
 from fabric_oom_repro.workload import wait_until_ready
@@ -30,23 +30,24 @@ def system_options(dremio):
 
 
 @pytest.fixture(scope="session")
-def oom_data():
-    """The directory of the data set (OOM_DATA): the input every run of the repro is tied to."""
-    if settings.OOM_DATA is None:
-        pytest.fail("OOM_DATA is not set: the directory of the data set (TestCaseData and TestSuiteInfo of "
-                    "fabric_oom_repro.generate_oom_data); on the stand scripts/fabric_oom_repro/env.sh sets it")
-    if not all((settings.OOM_DATA / name).is_dir() for name in TABLES):
-        pytest.fail(f"OOM_DATA {settings.OOM_DATA} has no {' and '.join(TABLES)}: generate it with fabric_oom_repro.generate_oom_data")
-    return settings.OOM_DATA
-
-
-@pytest.fixture(scope="session")
 def containers():
     """The containers whose logs the run is read from (OOM_CONTAINERS)."""
     if settings.OOM_CONTAINERS is None:
         pytest.fail("OOM_CONTAINERS is not set: the containers of the stand, host:container for the other host; "
                     "on the stand scripts/fabric_oom_repro/env.sh finds them")
     return settings.OOM_CONTAINERS
+
+
+@pytest.fixture(scope="session")
+def oom_data(containers):
+    """The directory of the data set (OOM_DATA): the input every run of the repro is tied to, the same on every node.
+    Generated when the directory does not exist, copied to the other hosts of the nodes."""
+    if settings.OOM_DATA is None:
+        pytest.fail("OOM_DATA is not set: the directory of the data set (TestCaseData and TestSuiteInfo of "
+                    "fabric_oom_repro.generate_oom_data), the same path on every node; on the stand "
+                    "scripts/fabric_oom_repro/env.sh sets it")
+    dataset.prepare(settings.OOM_DATA, settings.OOM_SCALE, containers, log=lambda m: print(m, flush=True))
+    return settings.OOM_DATA
 
 
 @pytest.fixture(scope="session")

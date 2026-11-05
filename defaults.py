@@ -17,6 +17,7 @@ def storage_path(container, root=STORAGE_ROOT):
 
 STORAGES = ("fs", "s3")                             # where the tables of a test run live: files of STORAGE_PATH, or a bucket of an S3 server
 STORAGE = "fs"                                      # the default of STORAGES
+TEST_STORAGES = (*STORAGES, "hdfs")                 # STORAGE of a pytest run; hdfs: a directory of an existing HDFS (scripts/test_container.sh and the OOM search do not serve it)
 
 def storage_file(filename, storage=STORAGE):
     """A file of the OOM search in DATA_DIR for a storage: the results of each storage are kept apart (they are not comparable),
