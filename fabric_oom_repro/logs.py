@@ -1,8 +1,8 @@
 """Lines of the Dremio logs of the repro containers (the archives and the current log, in log order)."""
 import shlex
-import subprocess
 
 from fabric_oom_repro import fabric_oom
+from fabric_oom_repro.stand import node, run_on
 
 # the log is rolled to the archive at midnight UTC: the archives come first so a roll during a run keeps the order
 LOGS = "/opt/dremio/log/archive/server.*.log.gz /opt/dremio/log/server.log"
@@ -10,11 +10,8 @@ LOGS = "/opt/dremio/log/archive/server.*.log.gz /opt/dremio/log/server.log"
 
 def log_lines(container, pattern):
     """The lines matching the extended regular expression in the Dremio log and its archives."""
-    host, _, name = container.rpartition(":")
-    command = ["incus", "exec", name, "--", "bash", "-c", f"shopt -s nullglob; zgrep -hE {shlex.quote(pattern)} {LOGS}"]
-    # ssh joins its arguments into one remote command line, so they must be quoted for it
-    out = subprocess.run(["ssh", "-o", "BatchMode=yes", host, shlex.join(command)] if host else command,
-                         capture_output=True, text=True)
+    host, name = node(container)
+    out = run_on(host, ["incus", "exec", name, "--", "bash", "-c", f"shopt -s nullglob; zgrep -hE {shlex.quote(pattern)} {LOGS}"])
     assert out.returncode in (0, 1), f"reading the log of {container} failed: {out.stderr}"  # 1: nothing matches
     return out.stdout.splitlines()
 

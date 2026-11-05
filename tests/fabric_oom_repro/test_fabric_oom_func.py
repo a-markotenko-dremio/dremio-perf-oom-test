@@ -36,13 +36,13 @@ Run = namedtuple("Run", "outcomes innocent events unrelated cut summary")
 
 
 @pytest.fixture(scope="module")
-def run(dremio, tables, stand_ready, system_options, containers):
+def run(dremio, tables, stand_ready, system_options, containers, stand):
     """The workload, with the events it added to the logs of all containers merged in time order."""
     (outcomes, innocent), per_container = events_added_by(
         containers, lambda: run_workload(dremio, settings.OOM_INNOCENT, settings.OOM_MAX_QUERY_SECONDS or None))
     events = fabric_oom.merge(per_container)
     unrelated, cut = unrelated_failures(outcomes), over_the_limit(outcomes)
-    summary = (f"{describe(system_options, outcomes)}\n"
+    summary = (f"{describe(stand, system_options, outcomes)}\n"
                f"innocent query: {f'{innocent.state} after {innocent.seconds:.0f}s' if innocent else 'not run'}\n"
                f"{fabric_oom.summarize(per_container)}\n"
                f"node losses: {fabric_oom.node_losses(events)}, jobs failed for another reason: {unrelated}\n"

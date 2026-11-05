@@ -14,6 +14,8 @@ from pathlib import Path
 
 NAME = re.compile(r"fabric-oom-(?P<case>\w+)-(?P<when>\d{8}-\d{6})\.log$")
 VERDICT = re.compile(r"^=+ (?P<counts>\d+ (?:passed|failed).*?) in (?P<seconds>[\d.]+)s", re.M)
+COMMIT = re.compile(r"^commit=(?P<commit>\S+)$", re.M)
+BUILD = re.compile(r"^build=(?P<packages>\{.*\})$", re.M)  # container -> "tarball sha256"
 SYSTEM_OPTIONS = re.compile(r"^system options=(?P<options>\{.*\})$", re.M)
 RESERVE_OPTION = "exec.spillable.operators.pct_free_memory_watermark"
 INNOCENT_QUERY = re.compile(r"^innocent query: (?P<state>.*)$", re.M)
@@ -21,11 +23,14 @@ OUTCOMES = re.compile(r"^(?:E +)?outcomes: (?P<list>\[.*\])$", re.M)
 EVENTS = re.compile(r"^(?:E +)?events: (?P<events>\{.*?\}), failures by cause: (?P<causes>\{.*?\})", re.M)
 LINE_COUNTS = re.compile(r"^(?:E +)?new log lines per container: (?P<counts>\{.*\})$", re.M)  # the summary before 2026-10-29
 SESSION_START = re.compile(r"^=+ test session starts =+$", re.M)
-COLUMNS = ("run", "case", "session", "reserve %", "small query", "took", "verdict", "fabric OOM", "arbiter", "completed", "over limit", "failed", "shrink")
+COLUMNS = ("run", "case", "session", "commit", "build", "reserve %", "small query", "took", "verdict", "fabric OOM", "arbiter", "completed", "over limit", "failed", "shrink")
 LEGEND = """\
 How to read the table:
 - run: the start of the run in the host's local time (from the log name); session: the pytest session of the run, func has
   three (the 4 % arbiter reserve, the default reserve, the small query next to the 8 with the 4 % reserve), repro and feature one;
+  commit: the commit of this repository the run was executed from (-dirty: with uncommitted changes); build: the Dremio tarball the
+  containers were installed from and the first 12 hex digits of its sha256 (the log has the whole; one entry per different
+  package when the nodes differ); both empty in logs from before they were printed;
   reserve %: the arbiter reserve of the session (exec.spillable.operators.pct_free_memory_watermark; "default" is Dremio's own 20),
   small query: whether the small query ran next to the 8 (OOM_INNOCENT) - what tells the three sessions of func apart (empty in logs
   that do not print them);
@@ -52,6 +57,10 @@ def row(name, number, text):
     r = {"run": datetime.strptime(name["when"], "%Y%m%d-%H%M%S").strftime("%Y-%m-%d %H:%M"), "case": name["case"], "session": number,
          "took": str(timedelta(seconds=round(float(verdict["seconds"])))) if verdict else "",
          "verdict": verdict["counts"].split(",")[0] if verdict else "no result (running or killed)"}
+    if commit := COMMIT.search(text):
+        r["commit"] = commit["commit"]
+    if build := BUILD.search(text):
+        r["build"] = "; ".join(sorted({f"{name} {sha[:12]}" for name, sha in map(str.split, ast.literal_eval(build["packages"]).values())}))
     if options := SYSTEM_OPTIONS.search(text):
         r["reserve %"] = ast.literal_eval(options["options"]).get(RESERVE_OPTION, "default")  # not set: Dremio's own (20)
     if small := INNOCENT_QUERY.search(text):

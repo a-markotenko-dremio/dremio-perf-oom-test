@@ -137,9 +137,11 @@ create_dremio_user() {
         useradd -u $HOST_UID -g $HOST_GID -m -d /home/dremio -s /usr/sbin/nologin dremio"
 }
 
-# Unpacks the Dremio tarball into /opt/dremio.
+# Unpacks the Dremio tarball into /opt/dremio and records which one (its name and sha256) in the container config, where
+# the tests of the stand read it from (fabric_oom_repro.stand).
 install_dremio() {
     log "Installing Dremio from $(basename "$PACKAGE")"
+    $CT config set "$NAME" user.dremio.package="$(basename "$PACKAGE")" user.dremio.package-sha256="$(sha256sum "$PACKAGE" | cut -d' ' -f1)"
     $CT file push "$PACKAGE" "$NAME/tmp/dremio.tar.gz"
     cx bash -c "mkdir -p /opt/dremio && tar -xzf /tmp/dremio.tar.gz -C /opt/dremio --strip-components=1 && rm /tmp/dremio.tar.gz"
     cx test -x /opt/dremio/bin/dremio || die "bin/dremio not found: unexpected tarball layout"

@@ -19,10 +19,10 @@ Run = namedtuple("Run", "events summary")
 
 
 @pytest.fixture(scope="module")
-def run(dremio, tables, stand_ready, system_options, containers):
+def run(dremio, tables, stand_ready, system_options, containers, stand):
     """The workload, with the events it added to the logs of all containers merged in time order."""
     (outcomes, _), per_container = events_added_by(containers, lambda: run_workload(dremio))
-    summary = f"{describe(system_options, outcomes)}\n{fabric_oom.summarize(per_container)}"
+    summary = f"{describe(stand, system_options, outcomes)}\n{fabric_oom.summarize(per_container)}"
     print("\n" + summary)
     return Run(fabric_oom.merge(per_container), summary)
 

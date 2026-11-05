@@ -1,9 +1,11 @@
-"""Fixtures of the fabric OOM tests: the system options of a run, the data set and its tables, the containers."""
+"""Fixtures of the fabric OOM tests: the system options of a run, the data set and its tables, the containers and what
+they run."""
 import pytest
 
 import settings
 from dremio_client import sql_value
 from fabric_oom_repro.generate_oom_data import TABLES
+from fabric_oom_repro.stand import stand_of
 from fabric_oom_repro.tables import register
 from fabric_oom_repro.workload import wait_until_ready
 
@@ -45,6 +47,12 @@ def containers():
         pytest.fail("OOM_CONTAINERS is not set: the containers of the stand, host:container for the other host; "
                     "on the stand scripts/fabric_oom_repro/env.sh finds them")
     return settings.OOM_CONTAINERS
+
+
+@pytest.fixture(scope="session")
+def stand(containers):
+    """What the run is on: the package of every container and the commit of the tests, for the run summary."""
+    return stand_of(containers)
 
 
 @pytest.fixture(scope="module")

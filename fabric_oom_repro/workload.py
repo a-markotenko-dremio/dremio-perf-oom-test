@@ -75,9 +75,10 @@ MEMORY_FAILURE = re.compile("OUT_OF_MEMORY ERROR|SYSTEM ERROR: ChannelClosedExce
 OVER_THE_LIMIT = "OVER THE LIMIT: the query did not return within the time the run allows"
 
 
-def describe(system_options, outcomes):
-    """The first lines of a run summary: what the run was tied to (data set, system options) and how the queries ended."""
-    return (f"data set={settings.OOM_DATA}\nsystem options={system_options}\n"
+def describe(stand, system_options, outcomes):
+    """The first lines of a run summary: what the run was on (the commit of the tests, the package of every container,
+    the data set, the system options) and how the queries ended."""
+    return (f"commit={stand.commit}\nbuild={stand.packages}\ndata set={settings.OOM_DATA}\nsystem options={system_options}\n"
             f"outcomes: {[f'{o.state} after {o.seconds:.0f}s' for o in outcomes]}")
 
 

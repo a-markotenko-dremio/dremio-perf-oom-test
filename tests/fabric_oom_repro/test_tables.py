@@ -7,6 +7,7 @@ import settings
 from dremio_client import JobFailed
 from fabric_oom_repro import tables, workload
 from fabric_oom_repro.generate_oom_data import TABLES, YEARS
+from fabric_oom_repro.stand import Stand
 from fabric_oom_repro.workload import Outcome
 
 SOURCE = "OOM Repro"
@@ -96,9 +97,12 @@ def test_a_data_set_without_all_years_is_refused():
         tables.register(FakeDremio(repointed=False, promoted=TABLES, years=["2024"]), SOURCE, DATA)
 
 
-def test_the_run_summary_names_the_data_set(monkeypatch):
+def test_the_run_summary_names_what_the_run_was_on(monkeypatch):
     monkeypatch.setattr(settings, "OOM_DATA", "qa-oom-repro.baseline-20261023")
     outcomes = [Outcome("151da457-dbeb-64fc-6796-a924ab1a5c00", "COMPLETED", 685.4)]
-    assert workload.describe({"planner.width.max_per_node": 24}, outcomes) == (
+    stand = Stand("f15b588-dirty", {"d27-0-0-j21-14G-4cpu": "dremio-enterprise-27.0.0-PR-31026-3.tar.gz 6eed9b2ae971f8c44dd17cb1935d32436339b914828f554e329c25d7e670c60d"})
+    assert workload.describe(stand, {"planner.width.max_per_node": 24}, outcomes) == (
+        "commit=f15b588-dirty\nbuild={'d27-0-0-j21-14G-4cpu': 'dremio-enterprise-27.0.0-PR-31026-3.tar.gz "
+        "6eed9b2ae971f8c44dd17cb1935d32436339b914828f554e329c25d7e670c60d'}\n"
         "data set=qa-oom-repro.baseline-20261023\nsystem options={'planner.width.max_per_node': 24}\n"
         "outcomes: ['COMPLETED after 685s']")
