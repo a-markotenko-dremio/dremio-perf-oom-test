@@ -2,8 +2,12 @@
 Offline tests of fabric_oom_repro.workload on the job errors of the runs of the stand (2026-10-29 and 2026-10-30):
 which of them is a memory failure the bug can explain and which is not about memory at all.
 """
-from fabric_oom_repro.workload import (INNOCENT, OVER_THE_LIMIT, QUERIES, Outcome, marked, over_the_limit,
-                                       slowest_completed, unrelated_failures)
+import pytest
+
+from dremio_client import JobFailed
+from fabric_oom_repro.workload import (INNOCENT, OVER_THE_LIMIT, PROBE_RETRY, QUERIES, READY_WAIT, Outcome,
+                                       StandNotReady, marked, over_the_limit, slowest_completed, unrelated_failures,
+                                       wait_until_ready)
 
 OOM = Outcome("151b2143-37c8-7a5b-8f79-4f2d935a3a00", "Job 151b2143-37c8-7a5b-8f79-4f2d935a3a00 FAILED: OUT_OF_MEMORY "
               "ERROR: Query was cancelled because it exceeded the memory limits set by the administrator. The executor "
@@ -61,3 +65,49 @@ def test_the_slowest_served_query_is_the_cost_of_surviving():
 
 def test_a_run_where_nothing_was_served_has_no_slowest_query():
     assert slowest_completed([OOM, BROKEN_INPUT]) is None
+
+
+# the run of 16:09 on 2026-11-04, session 2: every query failed this way within 30 s, the executor was still
+# cancelling the queries of session 1
+FRAGMENT_TIMEOUT = ("Job 15144f77-f3db-f45d-7d85-b018d6c36e00 FAILED: Exceeded timeout (30000) while waiting after "
+                    "sending work fragments to remote nodes. Sent 2 and only heard response back from 1 nodes")
+
+
+class StandAnsweringAfter:
+    """A Dremio that fails the first `failures` queries the way the executor of 2026-11-04 did, then answers."""
+
+    def __init__(self, failures):
+        self.failures, self.sql = failures, []
+
+    def run_sql(self, sql, timeout=None):
+        self.sql.append(sql)
+        if len(self.sql) <= self.failures:
+            raise JobFailed(f"{FRAGMENT_TIMEOUT}\nSQL: {sql[:200]}")
+        return {"id": "15144f1a-a9af-a0d0-a2a4-6f29797edd00"}
+
+
+class Clock:
+    def __init__(self, step):
+        self.now, self.step, self.slept = 0, step, []
+
+    def __call__(self):
+        self.now += self.step
+        return self.now
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+
+
+def test_the_run_waits_for_the_stand_to_answer_the_probe():
+    dremio, clock = StandAnsweringAfter(2), Clock(1)
+    probes = wait_until_ready(dremio, now=clock, sleep=clock.sleep)
+    assert [p.state for p in probes] == [FRAGMENT_TIMEOUT, FRAGMENT_TIMEOUT, "COMPLETED"]
+    assert clock.slept == [PROBE_RETRY, PROBE_RETRY]
+    assert len(set(dremio.sql)) == 3 and all(INNOCENT in sql for sql in dremio.sql)
+
+
+def test_a_stand_that_does_not_answer_makes_the_run_an_error():
+    dremio, clock = StandAnsweringAfter(100), Clock(READY_WAIT)
+    with pytest.raises(StandNotReady, match="the run cannot start.*Exceeded timeout \\(30000\\)"):
+        wait_until_ready(dremio, now=clock, sleep=clock.sleep)
+    assert len(dremio.sql) == 2  # the probe before the deadline and the one that found it passed

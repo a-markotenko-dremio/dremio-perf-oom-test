@@ -16,6 +16,9 @@ the queries run to their end and the run says whether every query of the workloa
 F-05 and F-07 see the same picture when it is the stand that broke and not the product: an executor that lost its
 ZooKeeper session leaves the cluster and takes its queries down with it. They judge the product only, and
 test_the_stand_held_through_the_run reports the rest; a run it fails gives no verdict on those two and is repeated.
+A run starts only when the stand answers a probe query (stand_ready, F-02): on 2026-11-04 three sessions lost every
+query within 30 s because the executor was still cancelling the queries of the session before, and such a run is an
+error of the setup, not a verdict.
 
 Run: scripts/fabric_oom_repro/run_fabric_oom_func.sh
 """
@@ -33,7 +36,7 @@ Run = namedtuple("Run", "outcomes innocent events unrelated cut summary")
 
 
 @pytest.fixture(scope="module")
-def run(dremio, tables, system_options, containers):
+def run(dremio, tables, stand_ready, system_options, containers):
     """The workload, with the events it added to the logs of all containers merged in time order."""
     (outcomes, innocent), per_container = events_added_by(
         containers, lambda: run_workload(dremio, settings.OOM_INNOCENT, settings.OOM_MAX_QUERY_SECONDS or None))

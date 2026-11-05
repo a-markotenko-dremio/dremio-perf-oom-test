@@ -5,6 +5,7 @@ import settings
 from dremio_client import sql_value
 from fabric_oom_repro.generate_oom_data import TABLES
 from fabric_oom_repro.tables import register
+from fabric_oom_repro.workload import wait_until_ready
 
 
 @pytest.fixture(scope="module")
@@ -50,3 +51,11 @@ def containers():
 def tables(dremio, oom_data):
     """The tables of the data set registered in Dremio."""
     register(dremio, settings.OOM_SOURCE, oom_data)
+
+
+@pytest.fixture(scope="module")
+def stand_ready(dremio, tables):
+    """The stand answers the probe query before the workload starts (F-02): a stand that does not makes the run an
+    error, not a verdict on the product."""
+    probes = wait_until_ready(dremio)
+    print(f"\nprobes before the run: {[f'{p.state} after {p.seconds:.0f}s' for p in probes]}")

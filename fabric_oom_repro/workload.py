@@ -57,6 +57,13 @@ QUERIES = [agg("2024"), agg("2025"), join("2024"), join("2025"),
            agg2("2026"), join2("2026"), agg2("2024"), join2("2025")]
 INNOCENT = f"SELECT COUNT(*) AS n FROM {TEST_CASE_DATA} WHERE dir0 = '2024'"  # a small query next to the 8
 INNOCENT_DELAY = 30  # seconds after the 8 queries start
+# The probe before a run: the stand must answer INNOCENT within PROBE_LIMIT, retried every PROBE_RETRY seconds for up to
+# READY_WAIT. An executor still cancelling the queries of the session before answers no fragment start for minutes
+# (`Exceeded timeout (30000) while waiting after sending work fragments to remote nodes`: three sessions of 2026-11-04
+# lost every query to that, not to memory). Next to the 8 queries INNOCENT answered in 53-79 s, alone it takes seconds.
+PROBE_LIMIT = 120
+PROBE_RETRY = 30
+READY_WAIT = 600
 
 Outcome = namedtuple("Outcome", "job state seconds")  # state: COMPLETED, or the first line of the error
 # The errors a memory failure of the run gives a query: the OOM of the arbiter or of an operator, and the
@@ -110,11 +117,34 @@ def run_query(dremio, sql, limit=None):
     return Outcome(job, state, time.time() - started)
 
 
+def new_marker():
+    """What makes the queries of one run unique (marked)."""
+    return time.strftime("%Y%m%d-%H%M%S")
+
+
+class StandNotReady(Exception):
+    """The stand did not answer the probe query: the run cannot start, so it ends in an error, not a verdict."""
+
+
+def wait_until_ready(dremio, now=time.time, sleep=time.sleep):
+    """The probe queries sent until one completes within PROBE_LIMIT seconds; raises StandNotReady when READY_WAIT
+    seconds pass first. Every probe carries its own marker, so the result cache answers none of them."""
+    deadline, marker, probes = now() + READY_WAIT, new_marker(), []
+    while True:
+        probes.append(run_query(dremio, marked(INNOCENT, f"{marker}-probe-{len(probes)}"), PROBE_LIMIT))
+        if probes[-1].state == "COMPLETED":
+            return probes
+        if now() > deadline:
+            raise StandNotReady(f"the stand did not answer the probe query within {READY_WAIT}s, the run cannot start: "
+                                f"{[f'{p.state} after {p.seconds:.0f}s' for p in probes]}")
+        sleep(PROBE_RETRY)
+
+
 def run_workload(dremio, innocent=False, limit=None):
     """Runs QUERIES at the same time and, with `innocent`, INNOCENT INNOCENT_DELAY seconds later; their outcomes. The
     queries carry the marker of this run, so none of them is answered from the result cache. A query that takes longer
     than `limit` seconds is cancelled and ends OVER_THE_LIMIT; without a limit it runs to its end."""
-    marker = time.strftime("%Y%m%d-%H%M%S")  # what makes the queries of this run unique
+    marker = new_marker()
     with ThreadPoolExecutor(len(QUERIES)) as pool:
         heavy = [pool.submit(run_query, dremio, marked(sql, marker), limit) for sql in QUERIES]
         small = None
