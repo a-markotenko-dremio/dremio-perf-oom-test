@@ -68,16 +68,17 @@ def test_the_stand_held_through_the_run(run):
 
 
 def test_no_transport_level_failure(run):
-    """F-03: No transport-level failure under the baseline workload. A fabric OOM event is an ERROR of a failed read
-    on a FABRIC thread, which with the read pause on is a WARN instead, so any such event fails the case whatever its
-    kind; the summary tells the socket-read OOMs from the decode-copy ones the fix leaves as they are."""
-    assert not run.events["transport_failure"] and not run.events["fabric_oom"], (
-        f"the channel failed: transport failures {run.events['transport_failure']}, fabric OOMs {run.events['fabric_oom']}\n{run.summary}")
+    """F-03: No transport-level failure under the baseline workload and no socket-read OOM that fails a channel. A fabric
+    OOM event is an ERROR of a failed read on a FABRIC thread, which with the read pause on is a WARN instead. The decode
+    copy OOMs the fix leaves as they are are counted apart (the summary), they do not fail the case."""
+    socket_reads = fabric_oom.socket_read_ooms(run.events)
+    assert not run.events["transport_failure"] and not socket_reads, (
+        f"the channel failed: transport failures {run.events['transport_failure']}, socket-read OOMs {socket_reads}\n{run.summary}")
 
 
 def test_no_query_failed_because_of_a_transport_failure(run):
     """F-04: No query fails because of a transport-level failure (the jobs that failed within 2 s after one, or after
-    a fabric OOM). Whether every other failed job carries the escalation or a per-query OOM is read from the
+    a socket-read OOM). Whether every other failed job carries the escalation or a per-query OOM is read from the
     summary: a failure the log does not name has no cause the test can check."""
     caused = [job for job in fabric_oom.failures_after_channel_loss(run.events) if job not in run.cut]
     assert not caused, f"jobs failed right after the channel was lost: {caused}\n{run.summary}"

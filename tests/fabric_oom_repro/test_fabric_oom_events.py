@@ -114,6 +114,14 @@ def test_a_fabric_read_that_exhausted_direct_memory_is_the_fabric_oom():
     assert events["fabric_oom"] == [(datetime(2026, 10, 22, 22, 38, 16, 908000), 4194304, 6439172371, 6442450944, "other")]
 
 
+def test_a_decode_copy_oom_is_not_a_socket_read_oom():
+    """The decode copy OOM of the run of 2026-11-05 on the YARN cluster (MessageDecoder.decodeMessage): outside the fix."""
+    decode_copy = fabric_oom.parse([FABRIC_ERROR, "\tat io.netty...", CAUSED_BY])
+    socket_read = fabric_oom.parse([FABRIC_ERROR, SOCKET_READ_FRAMES[0], CAUSED_BY])
+    assert decode_copy["fabric_oom"] and not fabric_oom.socket_read_ooms(decode_copy)
+    assert fabric_oom.socket_read_ooms(socket_read) == socket_read["fabric_oom"]
+
+
 def test_the_same_error_on_an_executor_thread_is_not_the_fabric_oom():
     line = FABRIC_ERROR.replace("[FABRIC-4]", "[e0 - 15258cdc-ced8-89fe-7b9c-c91519dc5c00:frag:1:0]").replace(
         "com.dremio.exec.rpc.MessageDecoder", "c.d.sabot.exec.fragment.FragmentExecutor")
@@ -147,11 +155,17 @@ def test_a_failure_without_a_named_cause_and_an_arbiter_message_elsewhere_are_no
     assert events["job_failed"] == [(datetime(2026, 10, 22, 20, 14, 2, 947000), "15259175-55ba-db94-09e0-47a26c46d400", "FAILED", "")]
 
 
-def test_jobs_that_failed_right_after_the_fabric_oom_are_attributed_to_it():
-    events = fabric_oom.parse([at(-5, job="aaaaaaaa-0000-0000-0000-000000000001"), FABRIC_ERROR, CAUSED_BY,
+def test_jobs_that_failed_right_after_the_socket_read_oom_are_attributed_to_it():
+    events = fabric_oom.parse([at(-5, job="aaaaaaaa-0000-0000-0000-000000000001"), FABRIC_ERROR, SOCKET_READ_FRAMES[0], CAUSED_BY,
                                at(1, job="aaaaaaaa-0000-0000-0000-000000000002"),
                                at(10, job="aaaaaaaa-0000-0000-0000-000000000003")])
     assert fabric_oom.failures_after_channel_loss(events) == ["aaaaaaaa-0000-0000-0000-000000000002"]
+
+
+def test_a_job_that_failed_right_after_a_decode_copy_oom_is_not_attributed_to_the_channel_loss():
+    """The run of 2026-11-05 on the YARN cluster: job 15130dc1-039b failed after an OOM of MessageDecoder.decodeMessage."""
+    events = fabric_oom.parse([FABRIC_ERROR, CAUSED_BY, at(1, job="aaaaaaaa-0000-0000-0000-000000000002")])
+    assert events["fabric_oom"] and not fabric_oom.failures_after_channel_loss(events)
 
 
 def test_the_node_going_down_is_many_failures_in_one_second():

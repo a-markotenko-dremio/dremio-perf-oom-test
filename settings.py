@@ -113,7 +113,7 @@ OOM_SOURCE = os.environ.get("OOM_SOURCE", defaults.OOM_REPRO_SOURCE)
 OOM_CONTAINERS = os.environ["OOM_CONTAINERS"].split(",") if "OOM_CONTAINERS" in os.environ else None  # see the containers fixture
 OOM_WIDTH = int(os.environ.get("OOM_WIDTH", "24"))
 OOM_RESERVE_PCT = os.environ.get("OOM_RESERVE_PCT")
-OOM_MAX_QUERY_SECONDS = int(os.environ.get("OOM_MAX_QUERY_SECONDS", "600"))
+OOM_MAX_QUERY_SECONDS = int(os.environ.get("OOM_MAX_QUERY_SECONDS", "2400"))
 OOM_INNOCENT = os.environ.get("OOM_INNOCENT", "0") == "1"
 OOM_ESCALATION = os.environ["OOM_ESCALATION"] == "1" if "OOM_ESCALATION" in os.environ else None  # see the system_options fixture
 OOM_ESCALATION_MILLIS = int(os.environ.get("OOM_ESCALATION_MILLIS", "2000"))

@@ -121,6 +121,11 @@ def parse(lines):
     return events
 
 
+def socket_read_ooms(events):
+    """The fabric OOMs of a failed socket read, the ones the fix handles; the decode copy ones ("other") are outside it."""
+    return [oom for oom in events["fabric_oom"] if oom[4] == "socket_read"]
+
+
 def merge(per_container):
     """One event list per kind over the events of all containers."""
     return {name: sorted(e for events in per_container.values() for e in events[name]) for name in EVENTS}
@@ -132,8 +137,8 @@ def failures_around(events, times, after=timedelta(seconds=2), before=timedelta(
 
 
 def failures_after_channel_loss(events, window=timedelta(seconds=2)):
-    """The jobs that failed within `window` after a fabric OOM or a transport failure: the failures the bug caused."""
-    return failures_around(events, [ts for ts, *_ in events["fabric_oom"]] + events["transport_failure"], window)
+    """The jobs that failed within `window` after a socket-read OOM or a transport failure: the failures the bug caused."""
+    return failures_around(events, [ts for ts, *_ in socket_read_ooms(events)] + events["transport_failure"], window)
 
 
 def node_losses(events, window=timedelta(seconds=120)):

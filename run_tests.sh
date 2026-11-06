@@ -1,2 +1,12 @@
- DREMIO_URL=http://172.25.1.201:9047 STORAGE=hdfs HDFS_HOST=a-markotenko-0.c.dremio-1093.internal \
-    STORAGE_PATH=/tmp/perf-blocks .venv/bin/python -m pytest -v -rs tests
+export DREMIO_URL=http://172.25.1.201:9047
+export OOM_DATA=/data/fabric-oom-repro/scale-0.0175
+export OOM_CONTAINERS="dremio://a-markotenko-0.c.dremio-1093.internal,yarn://a-markotenko-1.c.dremio-1093.internal,yarn://a-markotenko-2.c.dremio-1093.internal" 
+export DREMIO_TIMEOUT=2400
+export STORAGE=hdfs 
+export HDFS_HOST=a-markotenko-0.c.dremio-1093.internal
+export STORAGE_PATH=/tmp/perf-blocks 
+export OOM_RESERVE_PCT=4
+
+#.venv/bin/python -m pytest -x -v -rs tests
+echo pytest -v -rs tests/fabric_oom_repro/test_fabric_oom_func.py
+.venv/bin/python -m pytest -v -rs tests/fabric_oom_repro/test_fabric_oom_func.py
