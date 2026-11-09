@@ -1,7 +1,7 @@
-export DREMIO_URL=http://172.25.1.201:9047
+export DREMIO_URL=http://a-markotenko-0.c.dremio-1093.internal:9047
 export OOM_DATA=/data/fabric-oom-repro/scale-0.0175
-export OOM_CONTAINERS="dremio://a-markotenko-0.c.dremio-1093.internal,yarn://a-markotenko-1.c.dremio-1093.internal,yarn://a-markotenko-2.c.dremio-1093.internal" 
-export DREMIO_TIMEOUT=2400
+export OOM_CONTAINERS="dremio://a-markotenko-0.c.dremio-1093.internal,dremio://a-markotenko-1.c.dremio-1093.internal,dremio://a-markotenko-2.c.dremio-1093.internal"
+export DREMIO_TIMEOUT=600
 export STORAGE=hdfs 
 export HDFS_HOST=a-markotenko-0.c.dremio-1093.internal
 export STORAGE_PATH=/tmp/perf-blocks 
