@@ -18,6 +18,7 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "dry_run_safe: test runs even with --dry-run")
+    config.addinivalue_line("markers", "bdd: test checks a case of test-cases/ of the QA repository on the stand")
 
 
 def pytest_collection_modifyitems(config, items):

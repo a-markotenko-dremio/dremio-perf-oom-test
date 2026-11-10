@@ -5,6 +5,7 @@ import pytest
 import settings
 from dremio_client import sql_value
 from fabric_oom_repro import dataset
+from fabric_oom_repro.progress import progress
 from fabric_oom_repro.stand import stand_of
 from fabric_oom_repro.tables import register
 from fabric_oom_repro.workload import wait_until_ready
@@ -46,7 +47,7 @@ def oom_data(containers):
         pytest.fail("OOM_DATA is not set: the directory of the data set (TestCaseData and TestSuiteInfo of "
                     "fabric_oom_repro.generate_oom_data), the same path on every node; on the stand "
                     "scripts/fabric_oom_repro/env.sh sets it")
-    dataset.prepare(settings.OOM_DATA, settings.OOM_SCALE, containers, log=lambda m: print(m, flush=True))
+    dataset.prepare(settings.OOM_DATA, settings.OOM_SCALE, containers, log=progress)
     return settings.OOM_DATA
 
 
@@ -59,7 +60,9 @@ def stand(containers):
 @pytest.fixture(scope="module")
 def tables(dremio, oom_data):
     """The tables of the data set registered in Dremio."""
+    progress(f"registering {settings.OOM_SOURCE} over {oom_data} (an executor busy with the run before is waited for)")
     register(dremio, settings.OOM_SOURCE, oom_data)
+    progress("the tables are registered, probing the stand")
 
 
 @pytest.fixture(scope="module")
@@ -67,4 +70,4 @@ def stand_ready(dremio, tables):
     """The stand answers the probe query before the workload starts (F-02): a stand that does not makes the run an
     error, not a verdict on the product."""
     probes = wait_until_ready(dremio)
-    print(f"\nprobes before the run: {[f'{p.state} after {p.seconds:.0f}s' for p in probes]}")
+    progress(f"the stand answers, probes before the run: {[f'{p.state} after {p.seconds:.0f}s' for p in probes]}")

@@ -35,7 +35,7 @@ How to read the table:
   small query: whether the small query ran next to the 8 (OOM_INNOCENT) - what tells the three sessions of func apart (empty in logs
   that do not print them);
   case: repro = the reproduction (F-01), func = the
-  fix verification (F-03..F-09, P-06), feature = the run without a time limit (P-07); took: the time pytest reported.
+  fix verification (F-02..F-07), feature = the run without a time limit (P-05); took: the time pytest reported.
 - verdict: pytest's count. For repro "passed" means the bug reproduced (F-01 passes when it does), for func and feature
   "passed" means the fix criteria held. "no result" is a log without pytest's last line: the run is still going or was killed.
 - fabric OOM: the fabric direct-memory OOM events of both nodes, the bug; arbiter: the queries the memory arbiter cancelled,

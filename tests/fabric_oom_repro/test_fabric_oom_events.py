@@ -87,6 +87,8 @@ GIVE_UP = (f"2026-11-03 10:01:00,200 [FABRIC-4] ERROR c.d.exec.rpc.RpcExceptionH
            "after pausing reads for 60012 ms (65 retries); failing it.")
 TRANSPORT_CHANNEL = (f"2026-11-03 10:01:00,201 [FABRIC-4] ERROR c.d.exec.rpc.RpcExceptionHandler - Transport-level exception "
                      f"detected on channel {CHANNEL}. Failing all fragments on this executor.")
+# the pause report that triggers the escalation: its episode is the pause the WARN names, and it comes right before it
+ESCALATION_PAUSE = READ_PAUSE.replace("10:00:00,100", "10:00:02,250").replace("episode 1550 ms, retry 4", "episode 2150 ms, retry 6")
 ESCALATION = ("2026-11-03 10:00:02,300 [BlockedTaskMonitor] WARN  c.d.sabot.memory.MemoryArbiterImpl - MemoryArbiter escalating "
               "direct memory pressure: socket reads paused for 2150ms because direct memory could not be allocated. Direct memory "
               "used 6.0 GiB of 6.0 GiB, root allocator headroom 1.2 GiB, memory granted 4.8 GiB, shrinkable operators 12, "
@@ -185,7 +187,7 @@ def test_the_events_of_the_containers_are_merged_in_time_order():
 def test_the_fabric_oom_of_27_0_is_counted_although_the_decoder_no_longer_logs_it():
     events = fabric_oom.parse([DIRECT_EXHAUSTED, TRANSPORT, OOM_STACK, "\tat io.netty...", CAUSED_BY_27, DECODER_INFO])
     assert events["fabric_oom"] == [(datetime(2026, 10, 29, 18, 33, 15, 213000), 4194304, 6442297855, 6442450944, "other")]
-    assert events["transport_failure"] == [datetime(2026, 10, 29, 18, 33, 15, 213000)]
+    assert events["transport_failure"] == [(datetime(2026, 10, 29, 18, 33, 15, 213000), "")]
 
 
 def test_the_27_0_oom_is_counted_on_the_lines_the_zgrep_pattern_keeps():
@@ -265,7 +267,44 @@ def test_the_lines_of_the_read_pause_are_events_not_the_bug():
     assert not events["fabric_oom"]
     assert events["read_pause"] == [(datetime(2026, 11, 3, 10, 0, 0, 100000), CHANNEL, 400, 1550, 4, 7)]
     assert events["pause_gave_up"] == [(datetime(2026, 11, 3, 10, 1, 0, 200000), CHANNEL, 60012, 65)]
-    assert events["transport_failure"] == [datetime(2026, 11, 3, 10, 1, 0, 201000)]
+    assert events["transport_failure"] == [(datetime(2026, 11, 3, 10, 1, 0, 201000), CHANNEL)]
+
+
+def test_a_transport_failure_that_the_read_pause_gave_up_on_is_explained():
+    """F-02: the fixed build may still fail a channel, but only after the give-up of the read pause."""
+    events = fabric_oom.parse([READ_PAUSE, GIVE_UP, TRANSPORT_CHANNEL])
+    assert fabric_oom.unexplained_transport_failures(events) == []
+
+
+def test_a_transport_failure_without_a_give_up_before_it_is_not_explained():
+    """The bug: the channel fails with no give-up in front of it. The 27.0 line names the connection, not the channel,
+    so a give-up of any channel would explain it; here there is none, and a give-up that only follows it explains
+    nothing either."""
+    assert fabric_oom.unexplained_transport_failures(fabric_oom.parse([DIRECT_EXHAUSTED, TRANSPORT, CAUSED_BY_27])) == [
+        (datetime(2026, 10, 29, 18, 33, 15, 213000), "")]
+    later = GIVE_UP.replace("10:01:00,200", "10:01:01,200")
+    assert fabric_oom.unexplained_transport_failures(fabric_oom.parse([TRANSPORT_CHANNEL, later])) == [
+        (datetime(2026, 11, 3, 10, 1, 0, 201000), CHANNEL)]
+
+
+def test_a_give_up_of_another_channel_does_not_explain_the_failure():
+    other = GIVE_UP.replace("0x50a8155f", "0x11111111")
+    events = fabric_oom.parse([other, TRANSPORT_CHANNEL])
+    assert fabric_oom.unexplained_transport_failures(events) == [(datetime(2026, 11, 3, 10, 1, 0, 201000), CHANNEL)]
+
+
+def test_the_escalation_reads_the_pause_report_just_before_it():
+    """F-04: the WARN names the episode of that report and follows it before the next regular check."""
+    events = fabric_oom.parse([READ_PAUSE, ESCALATION_PAUSE, ESCALATION])
+    assert fabric_oom.escalation_triggers(events) == [(datetime(2026, 11, 3, 10, 0, 2, 300000), 2150, 2150, 50)]
+
+
+def test_an_escalation_that_does_not_follow_its_pause_report_is_visible():
+    """A pause of another episode, or one 2200 ms before the WARN, is not the report that triggered it."""
+    assert fabric_oom.escalation_triggers(fabric_oom.parse([READ_PAUSE, ESCALATION])) == [
+        (datetime(2026, 11, 3, 10, 0, 2, 300000), 2150, 1550, 2200)]
+    assert fabric_oom.escalation_triggers(fabric_oom.parse([ESCALATION])) == [
+        (datetime(2026, 11, 3, 10, 0, 2, 300000), 2150, None, None)]
 
 
 def test_the_escalation_names_its_victims_through_the_claw_back_line():

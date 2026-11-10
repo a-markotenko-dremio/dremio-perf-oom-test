@@ -47,7 +47,9 @@ def test_the_generator_runs_in_a_venv_with_the_duckdb_of_the_requirements(hosts,
     monkeypatch.setattr(dataset, "run_checked", lambda host, command: commands.append((host, command)) or "")
     dataset.generate_remote("a-1", "/data/fabric-oom-repro/scale-0.0175", 0.0175, lambda m: None)
     assert dataset.duckdb_requirement() == "duckdb==1.5.6"
-    (_, setup), (host, run) = commands
+    (_, data_dir), (_, setup), (host, run) = commands
+    assert data_dir == ["bash", "-c", "mkdir -p /data/fabric-oom-repro/scale-0.0175 || "
+                        "sudo -n install -d -o $(id -un) -g $(id -gn) /data/fabric-oom-repro/scale-0.0175"]
     assert dataset.duckdb_requirement() in setup[-1] and "uv pip install" in setup[-1] and dataset.REMOTE_PYTHON in setup[-1]
     assert (host, run) == ("a-1", [f"{dataset.REMOTE_DIR}/venv/bin/python", f"{dataset.REMOTE_DIR}/generate_oom_data.py",
                                    "/data/fabric-oom-repro/scale-0.0175", "--scale", "0.0175"])

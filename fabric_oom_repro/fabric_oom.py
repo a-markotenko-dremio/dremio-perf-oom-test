@@ -43,6 +43,8 @@ STATE_CHANGE = re.compile(rf"(?P<job>{JOB}): State change requested \w+ --> (?P<
 SHRINK = re.compile(rf"Asking operator (?P<job>{JOB}):frag")
 DIRECT_EXHAUSTED = "Direct memory exhausted on channel"  # 27.0: the ERROR line that carries the netty memory and the allocators
 TRANSPORT = "Transport-level exception detected"  # the channel failed: every fragment on the executor fails
+# the channel of the transport failure, when the line names one: the build with the read pause does, 27.0 names the connection
+TRANSPORT_LINE = re.compile(rf"{TRANSPORT}(?: on channel (?P<channel>\[[^\]]*\]))?")
 ARBITER_CANCEL = "MemoryArbiter detected no memory available"
 ESCALATION_CANCEL = "MemoryArbiter detected that network reads stayed paused because direct memory was exhausted"
 PLANNING = "MemoryAllocationUtilities"  # the logger of a memory failure in execution planning
@@ -52,6 +54,7 @@ READ_PAUSE = re.compile(r"Socket read could not allocate direct memory on channe
                         r"for (?P<delay>\d+) ms \(episode (?P<episode>\d+) ms, retry (?P<retry>\d+), node total pauses (?P<total>\d+)\)")
 GIVE_UP = re.compile(r"Channel (?P<channel>\[[^\]]*\]) still can't allocate after pausing reads for (?P<episode>\d+) ms "
                      r"\((?P<retries>\d+) retries\); failing it")
+REGULAR_CHECK_MS = 500  # how often the arbiter checks by itself; a pause report of >= `millis` queues a check at once
 ESCALATION = re.compile(r"MemoryArbiter escalating direct memory pressure: socket reads paused for (?P<paused>\d+) ?ms")
 CLAW_BACK = re.compile(r"Canceling (?P<count>\d+) queries that together consume .* top \d+: (?P<top>.*)")
 TOP_QUERY = re.compile(rf"(?P<job>{JOB}) (?P<memory>[^,]+)")
@@ -67,7 +70,8 @@ PATTERN = "|".join(["MessageDecoder", DIRECT_EXHAUSTED, "OutOfDirectMemoryError"
 def parse(lines):
     """
     The events of the lines, in log order: fabric_oom [(ts, size, used, max, kind)] with kind "socket_read" or "other",
-    transport_failure [ts], read_pause [(ts, channel, delay_ms, episode_ms, retry, node_total)],
+    transport_failure [(ts, channel)] with the channel "" when the line names the connection instead (27.0),
+    read_pause [(ts, channel, delay_ms, episode_ms, retry, node_total)],
     pause_gave_up [(ts, channel, episode_ms, retries)], escalation [(ts, paused_ms)],
     claw_back [(ts, count, [(job, memory)])] with the top queries in cancel order, shrink [(ts, job)],
     job_failed [(ts, job, state, cause)] with cause "arbiter", "escalation", "planning" or "" (not named in the log),
@@ -87,8 +91,8 @@ def parse(lines):
             socket_read = False
             if m["level"] == "ERROR" and m["logger"].endswith(PLANNING):
                 planning_failed.add(m["thread"].split(":")[0])
-            elif TRANSPORT in message:
-                events["transport_failure"].append(ts)
+            elif s := TRANSPORT_LINE.search(message):
+                events["transport_failure"].append((ts, s["channel"] or ""))
             elif s := READ_PAUSE.search(message):
                 events["read_pause"].append((ts, s["channel"], int(s["delay"]), int(s["episode"]), int(s["retry"]), int(s["total"])))
             elif s := GIVE_UP.search(message):
@@ -138,7 +142,19 @@ def failures_around(events, times, after=timedelta(seconds=2), before=timedelta(
 
 def failures_after_channel_loss(events, window=timedelta(seconds=2)):
     """The jobs that failed within `window` after a socket-read OOM or a transport failure: the failures the bug caused."""
-    return failures_around(events, [ts for ts, *_ in socket_read_ooms(events)] + events["transport_failure"], window)
+    return failures_around(events, [ts for ts, *_ in socket_read_ooms(events)]
+                           + [ts for ts, _ in events["transport_failure"]], window)
+
+
+def unexplained_transport_failures(events):
+    """The transport failures of one node that the read pause does not explain: the ones no `still can't allocate`
+    give-up precedes (F-02). A give-up of the same channel explains the failure; when either line names no channel
+    (27.0 names the connection instead), any give-up before it does."""
+    def explained(ts, channel):
+        return any(gave_up <= ts and (channel in ("", its_channel) or its_channel == "")
+                   for gave_up, its_channel, *_ in events["pause_gave_up"])
+
+    return [failure for failure in events["transport_failure"] if not explained(*failure)]
 
 
 def node_losses(events, window=timedelta(seconds=120)):
@@ -178,6 +194,19 @@ def escalations(events, window=timedelta(seconds=2)):
     return [(ts, paused, next(([job for job, _ in top[:count]] for cb, count, top in events["claw_back"]
                                if timedelta() <= cb - ts <= window), []))
             for ts, paused in events["escalation"]]
+
+
+def escalation_triggers(events):
+    """Every escalation of one node with the pause report just before it: (ts, paused_ms, episode_ms, gap_ms), the last
+    two None when no pause line precedes it. The escalation reads the pause of that report and the report queues its
+    own check instead of waiting for the next regular one (design change 2), so paused_ms is the episode of that line
+    and gap_ms stays under REGULAR_CHECK_MS."""
+    triggers = []
+    for ts, paused in events["escalation"]:
+        pause = max((p for p in events["read_pause"] if p[0] <= ts), key=lambda p: p[0], default=None)
+        triggers.append((ts, paused, pause[3] if pause else None,
+                         round((ts - pause[0]) / timedelta(milliseconds=1)) if pause else None))
+    return triggers
 
 
 def executor_record(events):

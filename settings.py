@@ -53,7 +53,7 @@
                    scripts/fabric_oom_repro/setup_fabric_oom_stand.sh.
   OOM_ESCALATION_MILLIS
                    exec.spillable.operators.direct_escalation.millis of the run (default 2000, the product default): the
-                   pause that triggers an escalation and what every escalation of the run is checked against (F-06)
+                   pause that triggers an escalation and what every escalation of the run is checked against (F-04)
   REPORT_CSV       CSV the run is appended to (default data/test_results.csv); the traceback log of a failed run goes next to it
   HEAP_MB / DIRECT_MB / JVM_VERSION / JAVA_IMAGE / CONTAINER_RAM_MB / CONTAINER_CPUS
                    what the Dremio under test was configured with (set by deploy_dremio.sh and

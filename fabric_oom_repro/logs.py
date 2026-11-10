@@ -4,6 +4,7 @@ installed on a host (`dremio://host`) or an executor that YARN runs on a host (`
 import shlex
 
 from fabric_oom_repro import fabric_oom
+from fabric_oom_repro.progress import progress
 from fabric_oom_repro.stand import node, run_on, split_scheme
 
 
@@ -44,7 +45,10 @@ def log_lines(container, pattern):
 
 
 def events_added_by(containers, action):
-    """Runs `action` and returns its result with the events (fabric_oom.parse) it added to the log of every container."""
+    """Runs `action` and returns its result with the events (fabric_oom.parse) it added to the log of every container.
+    Reading the logs of every node takes its own minutes, so both passes say when they run."""
+    progress(f"reading the logs of {', '.join(containers)}")
     before = {c: len(log_lines(c, fabric_oom.PATTERN)) for c in containers}
     result = action()
+    progress(f"the workload is over, reading the logs again: {dict(before)} lines before it")
     return result, {c: fabric_oom.parse(log_lines(c, fabric_oom.PATTERN)[n:]) for c, n in before.items()}

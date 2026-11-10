@@ -114,11 +114,12 @@ make fabric-oom-clean
 - `fabric-oom`: the stand and the repro.
 - The data set (`OOM_DATA`) is made by the tests: the `oom_data` fixture generates it (scale `OOM_SCALE`) at the same path on every host of `OOM_CONTAINERS` where the directory does not exist, nothing is copied between hosts. A remote host gets a venv with the `duckdb` of `requirements.txt` in `~/.cache/fabric-oom` (the first run installs it with `uv`, which fetches Python 3.12).
 - Nodes that are not incus containers (an existing cluster): `OOM_CONTAINERS=dremio://HOST,yarn://HOST,...` (`dremio://` the coordinator, `yarn://` an executor that YARN runs); their logs are read over ssh, their build is the `dremio_pkg_url` of the VM metadata.
-  Run pytest directly, with `DREMIO_URL` and an `OOM_DATA` on a disk with room for the data set (about 12.6 GB at the default scale) on every node. On `a-markotenko-0..2`: `OOM_DATA=/data/fabric-oom-repro/scale-0.0175` (the directory `/data/fabric-oom-repro` is made once on each VM: `sudo install -d -o dremio -g dremio /data/fabric-oom-repro`).
+  Run pytest directly, with `DREMIO_URL` and an `OOM_DATA` on a disk with room for the data set (about 12.6 GB at the default scale) on every node. On `a-markotenko-0..2`: `OOM_DATA=/data/fabric-oom-repro/scale-0.0175`. The directory is made by the `oom_data` fixture on every host, with `sudo` when its parent belongs to root (`/data` on the VMs), so a rebuilt VM needs nothing by hand.
 - `OOM_JAVA_OPTS=...` on the stand: a build with the fix, read pause on.
 - `OOM_MEMORY_PCT=50` on the stand: both nodes with half the heap, direct memory and container RAM.
 - `fabric-oom-func`: the fix verification on the stand that is up; `OOM_ESCALATION=1` escalation on, `0` the read pause alone.
 - `fabric-oom-feature`: the same workload with no time limit: does the fix serve every query.
 - `fabric-oom-repro OOM_DATA=...`: the repro on another data set; on a fixed build with both changes off the bug must still reproduce.
+- `pytest -m bdd tests`: the tests of the cases of `test-cases/` that run on the stand (`test_fabric_oom_repro.py` and `test_fabric_oom_func.py`) in one session. Which of them give a verdict depends on the configuration of the run: the repro module needs the fix off (F-01, F-08, F-17), the func module the fix on (F-02..F-07, P-05).
 - `fabric-oom-report`: a table with a row for every pytest session of every run from the logs in `data/` (`func` has three sessions per run), with how to read it.
 - `fabric-oom-clean`: removes the stand from both hosts (every container, also the S3 servers with their buckets), keeps the generated data.

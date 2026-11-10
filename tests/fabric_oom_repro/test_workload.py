@@ -5,9 +5,9 @@ which of them is a memory failure the bug can explain and which is not about mem
 import pytest
 
 from dremio_client import JobFailed
-from fabric_oom_repro.workload import (INNOCENT, OVER_THE_LIMIT, PROBE_RETRY, QUERIES, READY_WAIT, Outcome,
-                                       StandNotReady, marked, over_the_limit, slowest_completed, unrelated_failures,
-                                       wait_until_ready)
+from fabric_oom_repro.workload import (HEARTBEAT, INNOCENT, OVER_THE_LIMIT, PROBE_RETRY, QUERIES, READY_WAIT,
+                                       Outcome, StandNotReady, marked, over_the_limit, run_query, slowest_completed,
+                                       unrelated_failures, wait_for, wait_until_ready)
 
 OOM = Outcome("151b2143-37c8-7a5b-8f79-4f2d935a3a00", "Job 151b2143-37c8-7a5b-8f79-4f2d935a3a00 FAILED: OUT_OF_MEMORY "
               "ERROR: Query was cancelled because it exceeded the memory limits set by the administrator. The executor "
@@ -48,7 +48,7 @@ def test_a_failure_on_the_input_file_is_unrelated():
 
 
 def test_a_query_the_run_cut_off_is_not_a_failure_of_the_product():
-    """The time limit is the run's own, so the query it cancels belongs to P-06 and dirties nothing."""
+    """The time limit is the run's own, so the query it cancels is a failure on the limit and dirties nothing."""
     assert not unrelated_failures([CUT_OFF, DONE])
     assert over_the_limit([CUT_OFF, DONE]) == ["151afcf2-8d57-0cb9-dff6-e58cc20ef700"]
 
@@ -111,3 +111,54 @@ def test_a_stand_that_does_not_answer_makes_the_run_an_error():
     with pytest.raises(StandNotReady, match="the run cannot start.*Exceeded timeout \\(30000\\)"):
         wait_until_ready(dremio, now=clock, sleep=clock.sleep)
     assert len(dremio.sql) == 2  # the probe before the deadline and the one that found it passed
+
+
+class SleepClock:
+    """A clock the waiting moves: only sleeping passes time."""
+
+    def __init__(self):
+        self.seconds = 0
+
+    def now(self):
+        return self.seconds
+
+    def sleep(self, seconds):
+        self.seconds += seconds
+
+
+class Query:
+    """A submitted query that is done once the clock passes `finishes`."""
+
+    def __init__(self, clock, finishes):
+        self.clock, self.finishes = clock, finishes
+
+    def done(self):
+        return self.clock.seconds >= self.finishes
+
+
+def test_a_run_that_is_still_waiting_says_how_many_queries_are_left(capsys):
+    """Between the first and the last query of a run there is nothing to read for tens of minutes otherwise."""
+    clock = SleepClock()
+    wait_for([Query(clock, HEARTBEAT), Query(clock, 2.5 * HEARTBEAT)], sleep=clock.sleep, now=clock.now)
+    assert clock.seconds == 3 * HEARTBEAT
+    assert [line.split(" ", 1)[1] for line in capsys.readouterr().out.splitlines()] == [
+        "1 of 2 queries finished, 1 min gone", "1 of 2 queries finished, 2 min gone", "2 of 2 queries finished, 3 min gone"]
+
+
+def test_a_run_whose_queries_are_over_waits_for_nothing(capsys):
+    clock = SleepClock()
+    wait_for([Query(clock, 0)], sleep=clock.sleep, now=clock.now)
+    assert clock.seconds == 0 and capsys.readouterr().out == ""
+
+
+def test_a_query_reports_how_it_ended_as_soon_as_it_does(capsys):
+    """The outcomes of the run are printed when all of it is over, which is an hour after the first query ended."""
+    assert run_query(StandAnsweringAfter(0), "SELECT 1", name="query 3/8").state == "COMPLETED"
+    assert "query 3/8 15144f1a-a9af-a0d0-a2a4-6f29797edd00: COMPLETED after 0s" in capsys.readouterr().out
+
+
+def test_a_probe_that_failed_names_the_probe_and_the_error(capsys):
+    dremio, clock = StandAnsweringAfter(1), Clock(1)
+    wait_until_ready(dremio, now=clock, sleep=clock.sleep)
+    printed = capsys.readouterr().out
+    assert "probe 1 15144f77-f3db-f45d-7d85-b018d6c36e00: Job 15144f77" in printed and "probe 2 " in printed

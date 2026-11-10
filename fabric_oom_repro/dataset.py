@@ -2,6 +2,7 @@
 copies are the same, and nothing is copied between the hosts), at the same path on all of them: a NAS source needs
 one path on all nodes. A host that has the data set keeps it."""
 import re
+import shlex
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
@@ -24,9 +25,20 @@ def run_checked(host, command):
     return out.stdout
 
 
+def make_data_dir(host, path):
+    """Makes the directory of the data set on the host. Its parent belongs to root on a cloud VM (`/data`), where the
+    user the tests log in as cannot create it, so the plain mkdir is followed by sudo, which the hosts allow without a
+    password; a host that allows neither fails the run with the output of both."""
+    quoted = shlex.quote(str(path))
+    run_checked(host, ["bash", "-c", f"mkdir -p {quoted} || sudo -n install -d -o $(id -un) -g $(id -gn) {quoted}"])
+
+
 def generate_remote(host, path, scale, log):
-    """Runs the generator on the host in a venv of its own (created on the first run), unless it has the data set."""
+    """Runs the generator on the host in a venv of its own (created on the first run), unless it has the data set.
+    Generating takes tens of minutes, so the host says when it starts as well as what it ended with."""
     venv, uv = f"{REMOTE_DIR}/venv", f"{REMOTE_DIR}/uv"
+    log(f"{host}: preparing the data set {path} at scale {scale}")
+    make_data_dir(host, path)
     setup = (f"mkdir -p {REMOTE_DIR} && {venv}/bin/python -c 'import duckdb' 2>/dev/null || "
              f"{{ python3 -m venv {uv} && {uv}/bin/pip install -q uv && {uv}/bin/uv venv -q --clear --python {REMOTE_PYTHON} {venv} && "
              f"{uv}/bin/uv pip install -q --python {venv}/bin/python {duckdb_requirement()}; }}")
